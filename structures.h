@@ -10,14 +10,6 @@
 #include <stdbool.h>
 #include "constants.h"
 
-typedef struct Command{
-    const char *name;
-    bool requires_format;
-  	int expected_args;
-    const char **arg_error_msgs;
-    void (*handler)(VFS **vfs, char **args);
-    const char *help;
-} Command;
 
 
 typedef struct DIR_ITEM {
@@ -67,5 +59,15 @@ typedef struct vfs {
     char *name;
     FILE *vfs_file;
 } VFS;
+
+
+typedef struct Command{
+    const char *name;
+    bool requires_format;
+    int expected_args;
+    const char **arg_error_msgs;
+    void (*handler)(VFS **vfs, char **args);
+    const char *help;
+} Command;
 
 #endif //FS_ON_INODE_STRUCTURES_H

@@ -4,12 +4,15 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <structures.h>
-#include <commands.h>
-#include <vfs.h>
+#include "structures.h"
+#include "commands.h"
+#include "vfs.h"
 #include <string.h>
+#include "helpers.h"
+#include "constants.h"
 
 VFS *current_vfs = NULL;
+
 
 /*
  * Main command loop — handles user input and dispatches commands
@@ -18,12 +21,10 @@ void run_shell() {
     while (1) {
         printf("vfs> ");
         char *input = get_line();
-
+        remove_nl_inplace(input);
         if (!input || strlen(input) == 0) {
             continue;
         }
-
-        remove_nl(input);  // remove trailing newline
 
         // process command — if returns true, user entered 'exit'
         if (process_command_line(&current_vfs, input)) {
@@ -36,12 +37,12 @@ void run_shell() {
 }
 
 /*
- * Shows nice program banner
+ * Shows program banner
  */
 void show_banner() {
     printf("\n");
     printf("=====================================\n");
-    printf("   🔹  Virtual File System (VFS) 🔹   \n");
+    printf("     Virtual File System (VFS)    \n");
     printf("=====================================\n");
     printf("   Author: Khuda Denys\n");
     printf("   Language: C\n");

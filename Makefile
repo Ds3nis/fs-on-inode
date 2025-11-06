@@ -1,11 +1,19 @@
 CC=gcc
+CFLAGS=-Wall -lpthread -lm
 
-all:	clean comp
+SOURCES=main.c commands.c vfs.c
+OBJECTS=$(SOURCES:.c=.o)
 
-comp:
-	${CC} main.c -o fs-on-inode -lpthread -lm -Wall
+all: clean comp
 
+comp: $(OBJECTS)
+	${CC} $(OBJECTS) -o fs-on-inode $(CFLAGS)
+
+# Правило для компіляції кожного .c файлу в .o
+%.o: %.c
+	${CC} -c $< -o $@
 
 clean:
 	rm -f fs-on-inode
+	rm -f *.o
 	rm -f *.*~
