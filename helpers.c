@@ -75,3 +75,114 @@ void remove_nl_inplace(char *message) {
     }
     message[index] = '\0';
 }
+
+superblock *superblock_init(int32_t vfs_size) {
+    superblock *sb = calloc(1, sizeof(superblock));
+    if (!sb) {
+        return NULL;
+    }
+
+    memset(sb->signature, 0, SIGNATURE_LENGTH);
+    strncpy(sb->signature, SUPERBLOCK_SIGNATURE, SIGNATURE_LENGTH - 1);
+
+    sb->disk_size = vfs_size;
+    sb->cluster_size = CLUSTER_SIZE;
+    sb->cluster_count = vfs_size / CLUSTER_SIZE;
+
+    // bitmap needs one byte per data cluster; compute how many clusters needed to store bitmap
+    int32_t bitmap_bytes = sb->cluster_count * (int)sizeof(int8_t);
+    int32_t bitmap_cluster_count = (bitmap_bytes + CLUSTER_SIZE - 1) / CLUSTER_SIZE;
+    if (bitmap_cluster_count < 1) bitmap_cluster_count = 1;
+
+    // allocate ~10% clusters for inodes (at least 1)
+    int32_t inode_cluster_count = (int32_t)(sb->cluster_count * 0.10);
+    if (inode_cluster_count < 1) inode_cluster_count = 1;
+
+    // now data clusters are the rest
+    int32_t data_cluster_count = sb->cluster_count - bitmap_cluster_count - inode_cluster_count;
+    if (data_cluster_count < 1) {
+        printf("Not enough space for data clusters (choose larger size).\n");
+        exit(1);
+    }
+
+    // compute inode_count (how many inodes we can store)
+    int32_t inodes_per_cluster = CLUSTER_SIZE / (int)sizeof(inode);
+    int32_t inode_count = inode_cluster_count * inodes_per_cluster;
+
+    int32_t bitmap_start_address = CLUSTER_SIZE;
+    int32_t inode_start_address = bitmap_start_address + bitmap_cluster_count * CLUSTER_SIZE;
+    int32_t data_start_address = inode_start_address + inode_cluster_count * CLUSTER_SIZE;
+
+
+    sb->inode_count = inode_count;
+    sb->bitmap_cluster_count = bitmap_cluster_count;
+    sb->inode_cluster_count = inode_cluster_count;
+    sb->data_cluster_count = data_cluster_count;
+    sb->bitmap_start_address = bitmap_start_address;
+    sb->inode_start_address = inode_start_address;
+    sb->data_start_address = data_start_address;
+
+    return sb;
+}
+
+
+dir_item *create_directory_item(int32_t inode_id, const char *name) {
+    // create dir_item for root (inode 0, name "/")
+    dir_item *dir_item = calloc(1, sizeof(dir_item));
+    if (!dir_item) {return NULL; }
+
+
+    dir_item->inode = inode_id;
+    memset(dir_item->item_name, 0, MAX_ITEM_NAME_LENGTH);
+    // set name to "/" (or empty string depending on convention)
+    strncpy(dir_item->item_name, "/", MAX_ITEM_NAME_LENGTH - 1);
+    dir_item->next = NULL;
+
+    return dir_item;
+}
+
+/*
+ * Shows debug information
+ */
+void check_sb_info(VFS **vfs) {
+    printf("Signature : %s\n"
+           "Disk size: %d\n"
+           "Cluster size: %d\n"
+           "Cluster count: %d\n"
+           "Max Inode Count: %d\n"
+           "Bitmap cluster count: %d\n"
+           "Inode cluster count: %d\n"
+           "Data cluster count: %d\n"
+           "Bitmap start address: %d\n"
+           "Inode start address: %d\n"
+           "Data start address: %d\n",
+           (*vfs)->superblock->signature,
+           (*vfs)->superblock->disk_size,
+           (*vfs)->superblock->cluster_size,
+           (*vfs)->superblock->cluster_count,
+           (*vfs)->superblock->inode_count,
+           (*vfs)->superblock->bitmap_cluster_count,
+           (*vfs)->superblock->inode_cluster_count,
+           (*vfs)->superblock->data_cluster_count,
+           (*vfs)->superblock->bitmap_start_address,
+           (*vfs)->superblock->inode_start_address,
+           (*vfs)->superblock->data_start_address);
+
+    printf("\nVytvořené Inode :\n");
+    for (unsigned long i = 0 ; i < (*vfs)->superblock->inode_count; i++){
+        if ((*vfs)->inodes[i].nodeid == ID_ITEM_FREE) {
+            continue;
+        }
+
+        printf("%d ",(*vfs)->inodes[i].nodeid);
+    }
+
+    printf("\nData bitmapa:\n");
+    for (int i = 0 ; i < (*vfs)->superblock->data_cluster_count; i++){
+        printf("%d", (*vfs)->data_bitmap[i]);
+    }
+    printf("\n");
+}
+
+
+

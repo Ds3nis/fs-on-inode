@@ -106,9 +106,13 @@ void cmd_help() {
     printf("size inode_id 600M  --  Changes the size of the i-node with the given ID to the size specified by the parameter\n");
 }
 
+
+
+
 void cmd_format_vfs(VFS **vfs, char **args) {
     if (!args[0]) { printf("Missing argument!\n"); return; }
-    int vfs_size = atoi(args[0]);
+
+    int32_t vfs_size = atoi(args[0]);
     if (vfs_size < MIN_FS) {
         printf(FORMAT_ERROR_SIZE_MSG);
         return;
@@ -119,65 +123,35 @@ void cmd_format_vfs(VFS **vfs, char **args) {
         printf(OPEN_FILE_ERR_MSG);
         return;
     }
-
     (*vfs)->vfs_file = file;
 
-    superblock *sb = calloc(1, sizeof(superblock));
-    strcpy(sb->signature, SUPERBLOCK_SIGNATURE);
-    sb->disk_size = vfs_size;
-    sb->cluster_size = CLUSTER_SIZE;
-    sb->cluster_count = vfs_size / CLUSTER_SIZE;
-
-    // 10% для inodes, 5% для bitmap, решта для даних
-    sb->bitmap_cluster_count = sb->cluster_count * 0.05;
-    sb->inode_cluster_count = sb->cluster_count * 0.10;
-    sb->data_cluster_count = sb->cluster_count - sb->bitmap_cluster_count - sb->inode_cluster_count;
-
-    sb->bitmap_start_address = sizeof(superblock);
-    sb->inode_start_address = sb->bitmap_start_address + sb->bitmap_cluster_count * CLUSTER_SIZE;
-    sb->data_start_address = sb->inode_start_address + sb->inode_cluster_count * CLUSTER_SIZE;
-
-    (*vfs)->superblock = sb;
-
-    (*vfs)->data_bitmap = calloc(sb->cluster_count, sizeof(int8_t));
-    if (!(*vfs)->data_bitmap) {
-        printf(MEMORY_ERROR_MSG);
+    if (!vfs_init_memory_structures(vfs, vfs_size)) {
         fclose(file);
+        printf(MEMORY_ERROR_MSG);
         return;
     }
 
-    (*vfs)->inodes = calloc(sb->inode_cluster_count * (CLUSTER_SIZE / sizeof(inode)), sizeof(inode));
-    if (!(*vfs)->inodes) {
-        printf(MEMORY_ERROR_MSG);
-        fclose(file);
-        return;
+    char buffer[CLUSTER_SIZE];
+    memset(buffer, 0, CLUSTER_SIZE);
+    for (int i = 0; i < (*vfs)->superblock->cluster_count; i++) {
+        write_vfs(vfs, buffer, CLUSTER_SIZE, 1);
     }
 
-    // Всі inode вільні
-    for (int i = 0; i < sb->inode_cluster_count * (CLUSTER_SIZE / sizeof(inode)); i++) {
-        (*vfs)->inodes[i].nodeid = ID_ITEM_FREE;
-    }
 
-    inode *root = &((*vfs)->inodes[0]);
-    root->nodeid = 0;
-    root->isDirectory = true;
-    root->references = 1;
-    root->file_size = 0;
+    vfs_write_superblock_to_file(vfs);
 
-    rewind(file);
-    fwrite(sb, sizeof(superblock), 1, file);
+    vfs_write_bitmaps_to_file(vfs);
 
-    fseek(file, sb->bitmap_start_address, SEEK_SET);
-    fwrite((*vfs)->data_bitmap, sizeof(int8_t), sb->cluster_count, file);
+    vfs_write_inodes_to_file(vfs);
 
-    fseek(file, sb->inode_start_address, SEEK_SET);
-    fwrite((*vfs)->inodes, sizeof(inode), sb->inode_cluster_count * (CLUSTER_SIZE / sizeof(inode)), file);
-
-    fflush(file);
+    flush_vfs(vfs);
 
     (*vfs)->is_formatted = true;
+
     printf(FORMAT_SUCCESS_MSG);
+    check_sb_info(vfs);
 }
+
 
 void cmd_incp() {
 

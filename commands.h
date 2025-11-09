@@ -13,6 +13,7 @@ extern const int command_count;
 
 bool validate_and_execute_command(VFS **vfs, Command *cmd, char *input);
 int process_command_line(VFS **vfs, char *input);
+void debug(VFS **vfs);
 void cmd_format_vfs(VFS **vfs, char **args);
 void cmd_incp();
 void cmd_outcp();
