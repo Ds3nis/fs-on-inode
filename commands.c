@@ -13,13 +13,14 @@
 
 
 static const char *ERR_SRC_DEST[] = {SRC_NOT_DEFINED_MSG, DEST_NOT_DEFINED_MSG};
-static const char *ERR_DIRNAME[]  = {SRC_NOT_DEFINED_MSG};
+static const char *ERR_DIRNAME[]  = {DIRNAME_NOT_DEFINED_MSG};
 
 Command commands[] = {
+    {MKDIR_COMMAND, true,  1, ERR_DIRNAME,  cmd_mkdir, "Create new directory"},
+    {LS_COMMAND, true, 0, {}, cmd_ls, "Lists the content of directory"},
     {"incp",  true,  2, ERR_SRC_DEST, cmd_incp,  "Copy file from host to VFS"},
     {"outcp", true,  2, ERR_SRC_DEST, cmd_outcp, "Copy file from VFS to host"},
     {"cp",    true,  2, ERR_SRC_DEST, cmd_cp,    "Copy file inside VFS"},
-    {"mkdir", true,  1, ERR_DIRNAME,  cmd_mkdir, "Create new directory"},
     {"format",false, 1, NULL,         cmd_format_vfs,"Format the virtual disk"},
     {"help",  false, 0, NULL,         cmd_help,  "Show available commands"},
     {"exit",  false, 0, NULL,         cmd_exit,  "Exit the program"},
@@ -30,7 +31,7 @@ const int command_count = sizeof(commands) / sizeof(Command);
 
 
 bool validate_and_execute_command(VFS **vfs, Command *cmd, char *input) {
-    if (cmd->requires_format) {
+    if (cmd->requires_format && !(*vfs)->is_formatted) {
         printf(VFS_NOT_INITIALIZED_MSG);
         return false;
     }
@@ -46,6 +47,7 @@ bool validate_and_execute_command(VFS **vfs, Command *cmd, char *input) {
             }
             return false;
         }
+
     }
 
     cmd->handler(vfs, args);
@@ -62,7 +64,6 @@ int process_command_line(VFS **vfs, char *input) {
     if (!command_name) return false;
     for (int i = 0; i < command_count; i++) {
         printf("Compare: '%s' and '%s'\n", command_name, commands[i].name);
-
         if (streq(command_name, commands[i].name)) {
 
             bool should_exit = false;
@@ -137,7 +138,7 @@ void cmd_format_vfs(VFS **vfs, char **args) {
         write_vfs(vfs, buffer, CLUSTER_SIZE, 1);
     }
 
-
+    rewind_vfs(vfs);
     vfs_write_superblock_to_file(vfs);
 
     vfs_write_bitmaps_to_file(vfs);
@@ -148,8 +149,171 @@ void cmd_format_vfs(VFS **vfs, char **args) {
 
     (*vfs)->is_formatted = true;
 
+
     printf(FORMAT_SUCCESS_MSG);
     check_sb_info(vfs);
+}
+
+
+void cmd_mkdir(VFS **vfs, char **args) {
+    if (!vfs || !*vfs || !(*vfs)->is_formatted) {
+        printf(VFS_NOT_INITIALIZED_MSG);
+        return;
+    }
+
+    char *dirname = args[0];
+    if (str_empty(dirname)) {
+        printf(SRC_NOT_DEFINED_MSG);
+        return;
+    }
+
+    directory *dir = NULL;
+    char *name = NULL;
+
+    if (parse_path(vfs, dirname, &name, &dir) == ERROR_CODE) {
+        printf(PATH_NOT_FOUND_MSG);
+        return;
+    }
+
+    printf("Directory where need to create a subdir Node id %d\n", dir->current->inode);
+    printf("Item name %s \n", dir->current->item_name);
+    printf("Node id %d \n", (*vfs)->inodes[dir->current->inode].nodeid);
+
+
+    printf("%s", name);
+
+    if (dir == NULL) dir = (*vfs)->current_dir;
+
+    if (check_if_exists(dir, name)) {
+        printf(FILE_EXISTS_MSG);
+        return;
+    }
+
+    int free_inode = vfs_find_free_inode(vfs);
+    if (free_inode == -1) {
+        printf(NO_FREE_INODE);
+        return;
+    }
+
+    int32_t *data_block = find_free_data_blocks(vfs, 1);
+    if (!data_block) {
+        printf(NOT_ENOUGH_BLOCKS_MSG);
+        return;
+    }
+
+
+    inode *new_inode = &(*vfs)->inodes[free_inode];
+    memset(new_inode, 0, sizeof(inode));
+    new_inode->nodeid = free_inode;
+    new_inode->isDirectory = true;
+    new_inode->references = 1;
+    new_inode->file_size = 0;
+    new_inode->direct1 = data_block[0];
+    new_inode->direct2 = new_inode->direct3 = new_inode->direct4 =
+    new_inode->direct5 = new_inode->indirect1 = new_inode->indirect2 = ID_ITEM_FREE;
+
+    dir_item *new_item = create_directory_item(free_inode, name);
+    if (!new_item) {
+        free(data_block);
+        printf(MEMORY_ERROR_MSG);
+        return;
+    }
+
+    directory *new_dir = calloc(1, sizeof(directory));
+    if (!new_dir) {
+        free(new_item);
+        free(data_block);
+        printf(MEMORY_ERROR_MSG);
+        return;
+    }
+
+
+    new_dir->current = new_item;
+    new_dir->parent = dir;
+    new_dir->subdir = NULL;
+    new_dir->file = NULL;
+    (*vfs)->all_dirs[free_inode] = new_dir;
+
+    (*vfs)->data_bitmap[data_block[0]] = 1;
+
+    dir_item **temp = &(dir->subdir);
+    while (*temp) temp = &((*temp)->next);
+    *temp = new_item;
+
+    if (update_directory_in_file(vfs, dir, new_item, true) == ERROR_CODE) {
+        printf("Error writing directory structure to VFS.\n");
+        free(data_block);
+        return;
+    }
+
+    update_bitmap_in_file(vfs, new_item, 1, data_block, 1);
+
+    write_inode_to_vfs(vfs, free_inode);
+    flush_vfs(vfs);
+
+    printf("Directory '%s' created successfully (inode %d)\n", name, free_inode);
+    free(data_block);
+    check_sb_info(vfs);
+}
+
+void cmd_ls(VFS **vfs, char **args) {
+
+    directory *dir = NULL;
+    char *name = NULL;
+
+    if (!args || !args[0] || str_empty(args[0])) {
+        dir = (*vfs)->current_dir;
+    }
+    else {
+        if (parse_path(vfs, args[0], &name, &dir) == ERROR_CODE) {
+            printf(PATH_NOT_FOUND_MSG);
+            return;
+        }
+
+        if (!str_empty(name)) {
+            dir_item *sub = dir->subdir;
+            bool found = false;
+
+            while (sub) {
+                if (streq(sub->item_name, name)) {
+                    dir = (*vfs)->all_dirs[sub->inode];
+                    found = true;
+                    break;
+                }
+                sub = sub->next;
+            }
+
+            if (!found) {
+                printf(PATH_NOT_FOUND_MSG);
+                return;
+            }
+        }
+    }
+
+    if (!dir) {
+        printf(PATH_NOT_FOUND_MSG);
+        return;
+    }
+
+    printf("Directories:\n");
+    dir_item *sub = dir->subdir;
+    if (!sub) printf("  <none>\n");
+
+    while (sub) {
+        printf("DIR: %s\n", sub->item_name);
+        sub = sub->next;
+    }
+
+    printf("\nFiles:\n");
+    dir_item *file = dir->file;
+    if (!file) printf("  <none>\n");
+
+    while (file) {
+        printf("FILE: %s\n", file->item_name);
+        file = file->next;
+    }
+
+    printf("\n");
 }
 
 
@@ -166,9 +330,7 @@ void cmd_cp(){
 
 }
 
-void cmd_mkdir() {
 
-}
 
 void cmd_format(){
 }

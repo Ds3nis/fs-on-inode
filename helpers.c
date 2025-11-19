@@ -135,7 +135,7 @@ dir_item *create_directory_item(int32_t inode_id, const char *name) {
     dir_item->inode = inode_id;
     memset(dir_item->item_name, 0, MAX_ITEM_NAME_LENGTH);
     // set name to "/" (or empty string depending on convention)
-    strncpy(dir_item->item_name, "/", MAX_ITEM_NAME_LENGTH - 1);
+    strncpy(dir_item->item_name, name, MAX_ITEM_NAME_LENGTH - 1);
     dir_item->next = NULL;
 
     return dir_item;
@@ -184,5 +184,146 @@ void check_sb_info(VFS **vfs) {
     printf("\n");
 }
 
+int parse_path(VFS **vfs, char *path, char **name, directory **dir) {
+    if (str_empty(path)) {
+        return ERROR_CODE;
+    }
+
+    if (streq(path, "..")) {
+        *dir = (*vfs)->current_dir->parent;
+        *name = "";
+        return NO_ERROR_CODE;
+    }
+
+    char *slash = strrchr(path, '/');
+
+    if (slash == NULL) {
+        *dir = (*vfs)->current_dir;
+        *name = path;
+    } else {
+        *name = slash + 1;
+        int len = (int)(slash - path);
+        char buff[256];
+        memset(buff, 0, sizeof(buff));
+        strncpy(buff, path, len);
+
+        if (path[0] == '/' && len == 1) {
+            strcpy(buff, "/");
+        }
+
+        *dir = find_directory(vfs, buff);
+        if (*dir == NULL) {
+            return ERROR_CODE;
+        }
+    }
+
+    return NO_ERROR_CODE;
+}
+
+directory *find_directory(VFS **vfs, char *path) {
+    if (str_empty(path)) {
+        return NULL;
+    }
+
+    directory *current;
+
+    if (path[0] == '/') {
+        current = (*vfs)->all_dirs[0];
+        path++;
+        if (*path == '\0') {
+            return current;
+        }
+    } else {
+        current = (*vfs)->current_dir;
+    }
+
+    char buff[256];
+    strncpy(buff, path, sizeof(buff) - 1);
+    buff[sizeof(buff) - 1] = '\0';
+
+    char *token = strtok(buff, "/");
+    while (token != NULL) {
+        if (streq(token, ".")) {
+        } else if (streq(token, "..")) {
+            current = current->parent;
+        } else {
+            dir_item *found = find_item_by_name(current->subdir, token);
+            if (found == NULL) {
+                return NULL;
+            }
+            current = (*vfs)->all_dirs[found->inode];
+            if (current == NULL) {
+                return NULL;
+            }
+        }
+        token = strtok(NULL, "/");
+    }
+
+    return current;
+}
+
+dir_item *find_item_by_name(dir_item *first, const char *name) {
+    if (first == NULL || name == NULL) {
+        return NULL;
+    }
+
+    dir_item *current = first;
+    while (current != NULL) {
+        if (strncmp(current->item_name, name, MAX_ITEM_NAME_LENGTH) == 0) {
+            return current;
+        }
+        current = current->next;
+    }
+
+    return NULL;
+}
+
+bool check_if_exists(directory *dir, char *name) {
+    dir_item *item;
+
+    /* Loop through files of the directory */
+    item = dir->file;
+    while (item != NULL) {
+        if (streq(name, item->item_name)) {
+            return true;
+        }
+        item = item->next;
+    }
+
+    /* Loop through subdirs of the directory */
+    item = dir->subdir;
+    while (item != NULL) {
+        printf("Item subdir name %s and creating dir name %s" ,item->item_name, name);
+        if (streq(name, item->item_name)) {
+            return true;
+        }
+        item = item->next;
+    }
+    return false;
+}
+
+int32_t *find_free_data_blocks(VFS** vfs, int count) {
+    int i, found_blocks = 0;
+    int32_t *blocks = calloc(count, sizeof(int32_t));
+
+    if (blocks == NULL) {
+        printf(MEMORY_ERROR_MSG);
+        return NULL;
+    }
+
+    /* Find all data blocks */
+    for (i = 1; i < (*vfs)->superblock->data_cluster_count; i++) { /* Skip root */
+        if ((*vfs)->data_bitmap[i] == 0) {
+            blocks[found_blocks] = i;
+            found_blocks++;
+            if (found_blocks == count) {
+                return blocks;
+            }
+        }
+    }
+
+    free(blocks);
+    return NULL;
+}
 
 

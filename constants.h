@@ -7,7 +7,7 @@
 
 
 #define SUPERBLOCK_SIGNATURE "Khuda Denys"
-#define SIGNATURE_LENGTH 20
+#define SIGNATURE_LENGTH 12
 #define MAX_ITEM_NAME_LENGTH 12
 #define CLUSTER_SIZE            4096    // 4 kB
 #define INT32_COUNT_IN_BLOCK (CLUSTER_SIZE / 4)
@@ -16,14 +16,28 @@
 #define NEGATIVE_SIZE_OF_INT32  -4
 #define ID_ITEM_FREE            -1
 #define EMPTY_ADDRESS           0
+#define DIR_ENTRY_SIZE (sizeof(int32_t) + MAX_ITEM_NAME_LENGTH)
+#define MAX_DIR_ENTRIES_PER_CLUSTER (CLUSTER_SIZE / DIR_ENTRY_SIZE)
 
 
 #define FORMAT_VFS "Do you want to format new filesystem? (y/n): "
 #define SRC_NOT_DEFINED_MSG "\n"
 #define DEST_NOT_DEFINED_MSG "\n"
-#define FORMAT_ERROR_SIZE_MSG ""
+#define DIRNAME_NOT_DEFINED_MSG "Directory name is not define \n"
+#define FORMAT_ERROR_SIZE_MSG "Cannot format, too small filesystem. Specify size at least 102400 bits.\n"
 #define OPEN_FILE_ERR_MSG ""
 #define FORMAT_SUCCESS_MSG ""
+#define ERROR_SB_READING "Error reading superblock.\n"
+#define ERROR_LOADING "Error: directory structure corrupted or incomplete.\n"
+#define NO_FREE_INODE "No free inode available.\n"
+#define OK_MSG "OK \n"
+#define ERROR_CODE      -1
+#define NO_ERROR_CODE    0
+#define PATH_NOT_FOUND_MSG      "PATH NOT FOUND (target path does not exist)\n"
+#define FILE_NOT_FOUND_MSG      "FILE NOT FOUND (source does not exist)\n"
+#define FILE_EXISTS_MSG         "EXIST (cannot create, already exists)\n"
+#define DIR_NOT_EMPTY_MSG       "NOT EMPTY (directory contains subdirectories or files)\n"
+#define NOT_ENOUGH_BLOCKS_MSG "Not enough blocks found. Probably no more space available. \n"
 
 
 #define EXIT_COMMAND "exit"

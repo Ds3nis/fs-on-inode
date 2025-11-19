@@ -28,8 +28,6 @@ void initialize_vfs(VFS **vfs, char *vfs_name) {
     }
 
     (*vfs)->vfs_file = file;
-    (*vfs)->is_formatted = true;
-
 
     if (!load_vfs(vfs)) {
         printf(VFS_ERROR, vfs_name);
@@ -72,14 +70,17 @@ bool load_vfs(VFS **vfs) {
     }
 
     rewind_vfs(vfs);
-    vfs_read_sb(vfs);
-
+    if (!vfs_read_sb(vfs)) {
+        printf(ERROR_SB_READING);
+        return false;
+    }
 
     (*vfs)->data_bitmap = calloc((*vfs)->superblock->cluster_count, sizeof(int8_t));
     if (!(*vfs)->data_bitmap) {
         printf(MEMORY_ERROR_MSG);
         return false;
     }
+
 
     vfs_seek_from_start(vfs, (*vfs)->superblock->bitmap_start_address);
     vfs_read(vfs, (*vfs)->data_bitmap, sizeof(int8_t), (*vfs)->superblock->cluster_count);
@@ -90,14 +91,16 @@ bool load_vfs(VFS **vfs) {
         return false;
     }
 
+
+    for (int i = 0; i < (*vfs)->superblock->inode_count; i++) {
+        vfs_read_inodes(vfs, i);
+    }
+
+
     (*vfs)->all_dirs = calloc((*vfs)->superblock->inode_count, sizeof(directory *));
     if (!(*vfs)->all_dirs) {
         printf(MEMORY_ERROR_MSG);
         return false;
-    }
-
-    for (int i = 0; i < (*vfs)->superblock->inode_count; i++) {
-        vfs_read_inodes(vfs, i);
     }
 
     directory *root = calloc(1, sizeof(directory));
@@ -115,14 +118,25 @@ bool load_vfs(VFS **vfs) {
     (*vfs)->current_dir = root;
     (*vfs)->all_dirs[0] = root;
     (*vfs)->is_formatted = true;
-    vfs_load_directories(vfs, root);
+    if (!vfs_load_directories(vfs, root)) {
+        printf(ERROR_LOADING);
+        return false;
+    }
     printf(VFS_LOAD_SUCCESS);
     check_sb_info(vfs);
     return true;
 }
 
-void vfs_read_sb(VFS **vfs) {
-    vfs_read((*vfs), (*vfs)->superblock->signature, sizeof(char), SIGNATURE_LENGTH);
+bool vfs_read_sb(VFS **vfs) {
+
+    size_t bytes_read = 0;
+
+    bytes_read = vfs_read(vfs, (*vfs)->superblock->signature, sizeof(char), SIGNATURE_LENGTH);
+    if (bytes_read != SIGNATURE_LENGTH) {
+        printf("Error: Failed to read superblock signature\n");
+        return false;
+    }
+
     vfs_read_int32(vfs, &(*vfs)->superblock->disk_size);
     vfs_read_int32(vfs, &(*vfs)->superblock->cluster_size);
     vfs_read_int32(vfs, &(*vfs)->superblock->cluster_count);
@@ -133,6 +147,9 @@ void vfs_read_sb(VFS **vfs) {
     vfs_read_int32(vfs, &(*vfs)->superblock->bitmap_start_address);
     vfs_read_int32(vfs, &(*vfs)->superblock->inode_start_address);
     vfs_read_int32(vfs, &(*vfs)->superblock->data_start_address);
+
+
+    return true;
 }
 
 void vfs_read_inodes(VFS **vfs, int index) {
@@ -151,136 +168,121 @@ void vfs_read_inodes(VFS **vfs, int index) {
     vfs_read_int32(vfs, &(*vfs)->inodes[index].indirect2);
 }
 
-void vfs_load_directories(VFS **vfs, directory *dir) {
-    int i, j, block_count;
-    int inode_count = 64;	/* Maximum count of i-nodes in one data block */
-    int32_t *data_blocks;
-    int32_t node_id;
-    char filename[12];
-    directory *new_directory;
-    dir_item *item, *temp_subdir;
-    dir_item **last_subdir_address = &(dir->subdir);
-    dir_item **last_file_address = &(dir->file);
 
-    /* Get data blocks of this directory */
-    data_blocks = get_data_blocks(vfs, dir->current->inode, &block_count, NULL);
+bool vfs_load_directories(VFS **vfs, directory *root) {
+    if (!vfs || !*vfs || !root) return false;
+    return load_directory_from_vfs(vfs, root, root->current->inode);
+}
 
-    for (i = 0; i < block_count; i++) {
+bool load_directory_from_vfs(VFS **vfs, directory *dir, int inode_id) {
+    if (!vfs || !*vfs || !dir) return false;
+
+    int block_count = 0;
+    int32_t *data_blocks = get_data_blocks(vfs, inode_id, &block_count, NULL);
+    if (!data_blocks || block_count <= 0) {
+        free(data_blocks);
+        return true;
+    }
+
+    dir_item **last_subdir = &dir->subdir;
+    dir_item **last_file = &dir->file;
+
+    for (int i = 0; i < block_count; i++) {
         seek_data_cluster(vfs, data_blocks[i]);
-        for (j = 0; j < inode_count; j++) {
-            vfs_read_int32(vfs, &node_id);
-            if (node_id > 0) { /* Invalid inode, or root */
-                vfs_read(vfs, filename, sizeof(filename), 1);
-                item = create_directory_item(node_id, filename);
-                if ((*vfs)->inodes[node_id].isDirectory) {
-                    *last_subdir_address = item;
-                    last_subdir_address = &(item->next);
-                } else {
-                    *last_file_address = item;
-                    last_file_address = &(item->next);
-                }
-            } else { /* Skip */
-                seek_cur(vfs, sizeof(filename));
+
+        for (int j = 0; j < MAX_DIR_ENTRIES_PER_CLUSTER; j++) {
+            int32_t node_id;
+            char filename[MAX_ITEM_NAME_LENGTH] = {0};
+
+            if (!vfs_read_int32(vfs, &node_id)) break;
+            if (!vfs_read(vfs, filename, sizeof(filename), 1)) break;
+
+            if (node_id <= 0) continue;
+
+            dir_item *item = create_directory_item(node_id, filename);
+            if (!item) continue;
+
+            if ((*vfs)->inodes[node_id].isDirectory) {
+                *last_subdir = item;
+                last_subdir = &item->next;
+            } else {
+                *last_file = item;
+                last_file = &item->next;
             }
         }
     }
+
     free(data_blocks);
 
-    /* Recursively load subdirs */
-    temp_subdir = dir->subdir;
-    while (temp_subdir != NULL) {
-        new_directory = calloc(1, sizeof(directory));
-        new_directory->parent = dir;
-        new_directory->current = temp_subdir;
-        new_directory->subdir = NULL;
-        new_directory->file = NULL;
+    for (dir_item *sub = dir->subdir; sub; sub = sub->next) {
+        directory *new_dir = calloc(1, sizeof(directory));
+        if (!new_dir) {
+            printf(MEMORY_ERROR_MSG);
+            return false;
+        }
 
-        (*vfs)->all_dirs[temp_subdir->inode] = new_directory;
-        load_directory_from_vfs(vfs, new_directory, temp_subdir->inode);
+        new_dir->parent = dir;
+        new_dir->current = sub;
+        (*vfs)->all_dirs[sub->inode] = new_dir;
 
-        temp_subdir = temp_subdir->next;
+        if (!load_directory_from_vfs(vfs, new_dir, sub->inode)) {
+            return false;
+        }
     }
+    return true;
 }
 
 
-int32_t *get_data_blocks(VFS** vfs, int32_t nodeid, int *block_count, int *rest) {
-    int32_t *data_blocks;
-    int32_t number;
-    int i, tmp, counter;
 
-    int max_numbers = 2 * (CLUSTER_SIZE / 4) + 5;	/*  Maximum data blocks */
-    inode *node = &((*vfs)->inodes[nodeid]);
+int32_t *get_data_blocks(VFS **vfs, int32_t nodeid, int *block_count, int *rest) {
+    inode *node = &(*vfs)->inodes[nodeid];
+    if (!node) return NULL;
 
-    if (node->isDirectory) {	/*  If item is directory we cannot determine size. We have to loop through all blocks until we reach end */
-        counter = 0;
-        data_blocks = calloc(max_numbers, sizeof(int32_t));
+    int max_blocks = 5 + (CLUSTER_SIZE / 4) + (CLUSTER_SIZE / 4) * (CLUSTER_SIZE / 4);
+    int32_t *blocks = calloc(max_blocks, sizeof(int32_t));
+    if (!blocks) return NULL;
 
-        if (node->direct1 != ID_ITEM_FREE) data_blocks[counter++] = node->direct1;
-        if (node->direct2 != ID_ITEM_FREE) data_blocks[counter++] = node->direct2;
-        if (node->direct3 != ID_ITEM_FREE) data_blocks[counter++] = node->direct3;
-        if (node->direct4 != ID_ITEM_FREE) data_blocks[counter++] = node->direct4;
-        if (node->direct5 != ID_ITEM_FREE) data_blocks[counter++] = node->direct5;
+    int count = 0;
 
-        if (node->indirect1 != ID_ITEM_FREE) {
-            seek_data_cluster(vfs, node->indirect1);
-            for (i = 0; i < CLUSTER_SIZE / 4; i++) {
-                vfs_read_int32(vfs, &number);
-                if (number > 0) {
-                    data_blocks[counter++] = number;
-                } else {
-                    break;
+
+    int32_t *directs[] = {
+        &node->direct1, &node->direct2, &node->direct3,
+        &node->direct4, &node->direct5
+    };
+    for (int i = 0; i < 5; i++) {
+        if (*directs[i] != ID_ITEM_FREE)
+            blocks[count++] = *directs[i];
+    }
+
+    if (node->indirect1 != ID_ITEM_FREE) {
+        seek_data_cluster(vfs, node->indirect1);
+        for (int i = 0; i < CLUSTER_SIZE / 4; i++) {
+            int32_t ref = 0;
+            vfs_read_int32(vfs, &ref);
+            if (ref > 0) blocks[count++] = ref;
+            else break;
+        }
+    }
+
+    if (node->indirect2 != ID_ITEM_FREE) {
+        seek_data_cluster(vfs, node->indirect2);
+        for (int i = 0; i < CLUSTER_SIZE / 4; i++) {
+            int32_t ref_block = 0;
+            vfs_read_int32(vfs, &ref_block);
+            if (ref_block > 0) {
+                seek_data_cluster(vfs, ref_block);
+                for (int j = 0; j < CLUSTER_SIZE / 4; j++) {
+                    int32_t ref = 0;
+                    vfs_read_int32(vfs, &ref);
+                    if (ref > 0) blocks[count++] = ref;
+                    else break;
                 }
-            }
-        }
-
-        if (node->indirect2 != ID_ITEM_FREE) {
-            seek_data_cluster(vfs, node->indirect2);
-            for (i = 0; i < CLUSTER_SIZE / 4; i++) {
-                vfs_read_int32(vfs, &number);
-                if (number > 0) {
-                    data_blocks[counter++] = number;
-                }
-            }
-        }
-
-        *block_count = counter;
-    } else {	/*  If item is file */
-        *block_count = node->file_size / CLUSTER_SIZE;
-
-        if (rest != NULL) {
-            *rest = node->file_size % CLUSTER_SIZE;
-        }
-
-        if (node->file_size % CLUSTER_SIZE != 0) {      /* Need one more block to save rest of the file */
-            (*block_count)++;
-        }
-
-        data_blocks = calloc((*block_count), sizeof(int32_t));
-
-        data_blocks[0] = node->direct1;
-        if (*block_count > 1) data_blocks[1] = node->direct2;
-        if (*block_count > 2) data_blocks[2] = node->direct3;
-        if (*block_count > 3) data_blocks[3] = node->direct4;
-        if (*block_count > 4) data_blocks[4] = node->direct5;
-
-        if (*block_count > 5) {
-            if (*block_count > (CLUSTER_SIZE / 4) + 5) {	                                                            /*  Uses second indirect reference */
-                seek_data_cluster(vfs, node->indirect1);                                                                /*  Move to first indirect reference */
-                vfs_read(vfs, &data_blocks[5], sizeof(int32_t), CLUSTER_SIZE / sizeof(int32_t));            /*  Read all INT32 address from cluster */
-
-                tmp = *block_count - (CLUSTER_SIZE / 4) - 5;                                                            /*  Number of blocks to read */
-                seek_data_cluster(vfs, node->indirect2);                                                                /*  Move to second indirect reference */
-                vfs_read(vfs, &data_blocks[(CLUSTER_SIZE / 4) + 5], sizeof(int32_t), tmp);                         /*  Read rest of indirect references from cluster */
-            }
-            else {	/*  Only first indirect reference is used */
-                tmp = *block_count - 5;
-                seek_data_cluster(vfs, node->indirect1);
-                vfs_read(vfs, &data_blocks[5], sizeof(int32_t), tmp);
             }
         }
     }
 
-    return data_blocks;
+    *block_count = count;
+    return blocks;
 }
 
 int seek_data_cluster(VFS **vfs, int block_number) {
@@ -293,57 +295,6 @@ int seek_set(VFS **vfs, long int offset) {
 
 int seek_cur(VFS **vfs, long int offset) {
     return fseek((*vfs)->vfs_file, offset, SEEK_CUR);
-}
-
-void load_directory_from_vfs(VFS** vfs, directory *dir, int id) {
-    int i, j, block_count;
-    int inode_count = 64;	/* Maximum count of i-nodes in one data block */
-    int32_t *data_blocks;
-    int32_t node_id;
-    char filename[12];
-    directory *new_directory;
-    dir_item *item, *temp_subdir;
-    dir_item **last_subdir_address = &(dir->subdir);
-    dir_item **last_file_address = &(dir->file);
-
-    /* Get data blocks of this directory */
-    data_blocks = get_data_blocks(vfs, dir->current->inode, &block_count, NULL);
-
-    for (i = 0; i < block_count; i++) {
-        seek_data_cluster(vfs, data_blocks[i]);
-        for (j = 0; j < inode_count; j++) {
-            vfs_read_int32(vfs, &node_id);
-            if (node_id > 0) { /* Invalid inode, or root */
-                vfs_read(vfs, filename, sizeof(filename), 1);
-                item = create_directory_item(node_id, filename);
-                if ((*vfs)->inodes[node_id].isDirectory) {
-                    *last_subdir_address = item;
-                    last_subdir_address = &(item->next);
-                } else {
-                    *last_file_address = item;
-                    last_file_address = &(item->next);
-                }
-            } else { /* Skip */
-                seek_cur(vfs, sizeof(filename));
-            }
-        }
-    }
-    free(data_blocks);
-
-    /* Recursively load subdirs */
-    temp_subdir = dir->subdir;
-    while (temp_subdir != NULL) {
-        new_directory = calloc(1, sizeof(directory));
-        new_directory->parent = dir;
-        new_directory->current = temp_subdir;
-        new_directory->subdir = NULL;
-        new_directory->file = NULL;
-
-        (*vfs)->all_dirs[temp_subdir->inode] = new_directory;
-        load_directory_from_vfs(vfs, new_directory, temp_subdir->inode);
-
-        temp_subdir = temp_subdir->next;
-    }
 }
 
 
@@ -495,4 +446,235 @@ void vfs_write_inodes_to_file(VFS **vfs) {
     for (int i = 0; i < (*vfs)->superblock->inode_count; i++) {
         write_inode_to_vfs(vfs, i);
     }
+}
+
+int32_t vfs_find_free_inode(VFS **vfs) {
+    for (int i = 0; i < (*vfs)->superblock->inode_count; i++) {
+        if ((*vfs)->inodes[i].nodeid == ID_ITEM_FREE) {
+            return i;
+        }
+    }
+
+    return ID_ITEM_FREE;
+}
+
+int update_directory_in_file(VFS** vfs, directory *dir, dir_item *item, bool create) {
+    if (create == true) {	// Store item (find free space)
+        return create_directory_in_file(vfs, dir, item);
+    }
+    else {	// Remove item (find the item with the specific id)
+        return remove_directory_from_file(vfs, dir, item);
+    }
+
+    return ERROR_CODE;
+}
+
+
+int create_directory_in_file(VFS** vfs, directory *dir, dir_item *item) {
+    int i, j, block_count;
+    int32_t *blocks, *free_block;
+    int max_items_in_block = 64;
+    int32_t nodeid;
+    inode *dir_node;
+
+    /* Get data blocks */
+    blocks = get_data_blocks(vfs, dir->current->inode, &block_count, NULL);
+
+    for (i = 0; i < block_count; i++) {
+        seek_data_cluster(vfs, blocks[i]);
+        for (j = 0; j < max_items_in_block; j++) {
+            vfs_read_int32(vfs, &nodeid);
+            if (nodeid == 0) {
+                seek_cur(vfs, -4); /* Rewind back for a size of int32_t (4 bytes) */
+                vfs_write_int32(vfs, &(item->inode)); /* Store address of inode */
+                write_vfs(vfs, item->item_name, sizeof(item->item_name), 1); /* Store name of folder */
+                flush_vfs(vfs);
+                free(blocks);
+                return NO_ERROR_CODE;
+            } else {
+                seek_cur(vfs, MAX_ITEM_NAME_LENGTH);	/* Skip filename */
+            }
+        }
+    }
+
+    /* No free space left, we need to assign new data cluster */
+    free_block = find_free_data_blocks(vfs, 1);
+    if (!free_block) {
+        return ERROR_CODE;
+    }
+
+
+    dir_node = &((*vfs)->inodes[dir->current->inode]);
+
+    if (dir_node->direct1 == ID_ITEM_FREE) dir_node->direct1 = free_block[0];
+    else if (dir_node->direct2 == ID_ITEM_FREE) dir_node->direct2 = free_block[0];
+    else if (dir_node->direct3 == ID_ITEM_FREE) dir_node->direct3 = free_block[0];
+    else if (dir_node->direct4 == ID_ITEM_FREE) dir_node->direct4 = free_block[0];
+    else if (dir_node->direct5 == ID_ITEM_FREE) dir_node->direct5 = free_block[0];
+    else {
+        free(free_block);
+        free_block = find_free_data_blocks(vfs, 2);	/* Use indirect reference (need 2 free blocks - one to store addresses in indirect reference and one for the dirs) */
+        if (free_block == NULL) return ERROR_CODE;
+
+        if (dir_node->indirect1 == ID_ITEM_FREE) {
+            dir_node->indirect1 = free_block[1];
+        }
+        else if (dir_node->indirect2 == ID_ITEM_FREE) {
+            dir_node->indirect2 = free_block[1];
+        }
+
+        seek_data_cluster(vfs, free_block[1]);
+        vfs_write_int32(vfs, &(free_block[0]));
+    }
+
+    seek_data_cluster(vfs, free_block[0]);
+    vfs_write_int32(vfs, &(item->inode));
+    write_vfs(vfs, item->item_name, sizeof(item->item_name), 1);
+
+    flush_vfs(vfs);
+    update_bitmap_in_file(vfs, dir->current, 1, NULL, 0);
+    write_inode_to_vfs(vfs, dir->current->inode);
+    free(free_block);
+    free(blocks);
+    return NO_ERROR_CODE;
+}
+
+int remove_directory_from_file(VFS** vfs, directory *dir, dir_item *item) {
+    int block_number, j, block_count, item_count, rest, found = 0;
+    int32_t *blocks, number, count, zero = 0;
+    int empty[4];
+    int max_items_in_block = 64;
+    int32_t nodeid;
+
+    memset(empty, 0, sizeof(empty));
+
+    /* Get data blocks */
+    blocks = get_data_blocks(vfs, dir->current->inode, &block_count, &rest);
+
+    for (block_number = 0; block_number < block_count; block_number++) {
+        seek_data_cluster(vfs, blocks[block_number]);
+
+        item_count = 0;	// Counter of items in this data block
+        for (j = 0; j < max_items_in_block; j++) {
+            vfs_read_int32(vfs, &nodeid);
+            if (nodeid > 0) {
+                item_count++;
+            }
+
+            if (!found) {
+                if (nodeid == (item->inode)) {
+                    seek_cur(vfs, -4);
+                    write_vfs(vfs, &empty, sizeof(empty), 1);
+                    flush_vfs(vfs);
+                    found = 1;
+
+                    if (item_count > 1) break;
+                }
+            }
+        }
+
+        if (found) {	/* Verify if data block is free - If yes remove reference to it */
+            if (item_count == 1) {
+                inode *node = &((*vfs)->inodes[item->inode]);
+
+                if (node->direct1 != block_number) {	/* Don't remove first direct */
+                    if (node->direct2 == block_number) {
+                        node->direct2 = ID_ITEM_FREE;
+                    }
+                    else if (node->direct3 == block_number) {
+                        node->direct3 = ID_ITEM_FREE;
+                    }
+                    else if (node->direct4 == block_number) {
+                        node->direct4 = ID_ITEM_FREE;
+                    }
+                    else if (node->direct5 == block_number) {
+                        node->direct5 = ID_ITEM_FREE;
+                    }
+                    else {
+                        for (int i = 0; i < 2; i++) {
+                            if (i == 0)	// Go through indirect1
+                                seek_data_cluster(vfs, node->indirect1);
+                            else 		// Go through indirect2
+                                seek_data_cluster(vfs, node->indirect2);
+
+                            count = 0;
+                            found = 0;
+                            for (j = 0; j < INT32_COUNT_IN_BLOCK; j++) {
+                                vfs_read_int32(vfs, &number);
+                                if (number > 0)
+                                    count++;
+                                if (!found) {
+                                    if (number == block_number) {
+                                        found = 1;
+                                        seek_cur(vfs, NEGATIVE_SIZE_OF_INT32);
+                                        vfs_write_int32(vfs, &zero);
+                                        flush_vfs(vfs);
+                                        if (count > 1)
+                                            break;
+                                    }
+                                }
+                            }
+
+                            if (found) {
+                                /* Remove indirect references if they are empty */
+                                if (count == 1) {
+                                    if (i == 0) {
+                                        node->indirect1 = ID_ITEM_FREE;
+                                    }
+                                    else {
+                                        node->indirect2 = ID_ITEM_FREE;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    update_bitmap_in_file(vfs, item, 0, NULL, 0);
+                    write_inode_to_vfs(vfs, item->inode);
+                }
+            }
+
+            free(blocks);
+            return NO_ERROR_CODE;
+        }
+    }
+
+    return ERROR_CODE;
+}
+
+void update_bitmap_in_file(VFS** vfs, dir_item *item, int8_t value, int32_t *data_blocks, int b_count) {
+    int i, block_count;
+    int32_t *blocks;
+
+    if (!data_blocks) {
+        blocks = get_data_blocks(vfs, item->inode, &block_count, NULL);
+    }
+    else {
+        blocks = data_blocks;
+        block_count = b_count;
+    }
+
+    /* Write all blocks */
+    for (i = 0; i < block_count; i++) {
+        (*vfs)->data_bitmap[blocks[i]] = value;
+        seek_set(vfs, (*vfs)->superblock->bitmap_start_address + blocks[i]);
+        vfs_write_int8(vfs, &value);
+    }
+
+
+    /* Indirect 1 data block */
+    if ((*vfs)->inodes[item->inode].indirect1 != ID_ITEM_FREE) {
+        (*vfs)->data_bitmap[(*vfs)->inodes[item->inode].indirect1] = value;
+        seek_set(vfs, (*vfs)->superblock->bitmap_start_address + (*vfs)->inodes[item->inode].indirect1);
+        vfs_write_int8(vfs, &value);
+    }
+    /* Indirect 2 data block */
+    if ((*vfs)->inodes[item->inode].indirect2 != ID_ITEM_FREE) {
+        (*vfs)->data_bitmap[(*vfs)->inodes[item->inode].indirect2] = value;
+        seek_set(vfs, (*vfs)->superblock->bitmap_start_address + (*vfs)->inodes[item->inode].indirect2);
+        vfs_write_int8(vfs, &value);
+    }
+
+    flush_vfs(vfs);
 }
