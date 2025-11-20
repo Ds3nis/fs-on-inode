@@ -16,11 +16,15 @@ int process_command_line(VFS **vfs, char *input);
 void cmd_format_vfs(VFS **vfs, char **args);
 void cmd_mkdir(VFS **vfs, char **args);
 void cmd_ls(VFS **vfs, char **args);
+void cmd_rmdir(VFS **vfs, char **args);
+void cmd_pwd(VFS **vfs, char **args);
+void cmd_cd(VFS **vfs, char **args);
+void cmd_info(VFS **vfs, char **args);
 void cmd_incp();
 void cmd_outcp();
 void cmd_cp();
 void cmd_format();
 void cmd_help();
-void cmd_exit();
+void cmd_exit(VFS **vfs, char **args);
 
 #endif //FS_ON_INODE_COMMANDS_H

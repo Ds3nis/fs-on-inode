@@ -22,10 +22,12 @@
 
 #define FORMAT_VFS "Do you want to format new filesystem? (y/n): "
 #define SRC_NOT_DEFINED_MSG "\n"
-#define DEST_NOT_DEFINED_MSG "\n"
+#define DEST_NOT_DEFINED_MSG "Destination path not defined \n"
+#define FILE_OR_DIRECTORY_NOT_DEFINED "Directory or file path not defined \n"
 #define DIRNAME_NOT_DEFINED_MSG "Directory name is not define \n"
 #define FORMAT_ERROR_SIZE_MSG "Cannot format, too small filesystem. Specify size at least 102400 bits.\n"
 #define OPEN_FILE_ERR_MSG ""
+#define FS_SIZE_NOT_DEFINED_MSG "File size not defined.\n"
 #define FORMAT_SUCCESS_MSG ""
 #define ERROR_SB_READING "Error reading superblock.\n"
 #define ERROR_LOADING "Error: directory structure corrupted or incomplete.\n"

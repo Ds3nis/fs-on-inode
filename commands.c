@@ -12,18 +12,21 @@
 
 
 
-static const char *ERR_SRC_DEST[] = {SRC_NOT_DEFINED_MSG, DEST_NOT_DEFINED_MSG};
 static const char *ERR_DIRNAME[]  = {DIRNAME_NOT_DEFINED_MSG};
+static const char *ERR_FS_SIZE[] = {FS_SIZE_NOT_DEFINED_MSG};
+static const char *ERR_SRC_DEST[] = {DEST_NOT_DEFINED_MSG};
+static const char *ERR_FILE_NAME[] = {FILE_OR_DIRECTORY_NOT_DEFINED};
 
 Command commands[] = {
-    {MKDIR_COMMAND, true,  1, ERR_DIRNAME,  cmd_mkdir, "Create new directory"},
-    {LS_COMMAND, true, 0, {}, cmd_ls, "Lists the content of directory"},
-    {"incp",  true,  2, ERR_SRC_DEST, cmd_incp,  "Copy file from host to VFS"},
-    {"outcp", true,  2, ERR_SRC_DEST, cmd_outcp, "Copy file from VFS to host"},
-    {"cp",    true,  2, ERR_SRC_DEST, cmd_cp,    "Copy file inside VFS"},
-    {"format",false, 1, NULL,         cmd_format_vfs,"Format the virtual disk"},
-    {"help",  false, 0, NULL,         cmd_help,  "Show available commands"},
-    {"exit",  false, 0, NULL,         cmd_exit,  "Exit the program"},
+    {HELP_COMMAND,  false, 0, NULL, cmd_help,  "help --  Show available commands \n"},
+    {FORMAT_COMMAND,false, 1, ERR_FS_SIZE, cmd_format_vfs,"format 600M  --  Formats the virtual file system (VFS)\n"},
+    {MKDIR_COMMAND, true,  1, ERR_DIRNAME,  cmd_mkdir, "mkdir a1  --  Creates new directory a1\n"},
+    {LS_COMMAND, true, 0, {}, cmd_ls, "ls a1  --  Lists the contents of the directory a1\n"},
+    {RM_COMMAND, true, 1, ERR_DIRNAME, cmd_rmdir, "rmdir a1  --  Deletes the directory a1\n"},
+    {PWD_COMMAND, true, 0, {}, cmd_pwd, "pwd  --  Lists the path to the current folder\n"},
+    {CD_COMMAND, true, 1, ERR_SRC_DEST, cmd_cd, "cd a1  --  Changes the current folder to the directory at address a1\n"},
+    {INFO_COMMAND, true, 1, ERR_FILE_NAME, cmd_info, "info a1/s1  --  Lists information about the given file/folder\n"},
+    {EXIT_COMMAND, false, 0, {}, cmd_exit, "exit -- Exit filesystem \n"}
 };
 
 
@@ -31,7 +34,7 @@ const int command_count = sizeof(commands) / sizeof(Command);
 
 
 bool validate_and_execute_command(VFS **vfs, Command *cmd, char *input) {
-    if (cmd->requires_format && !(*vfs)->is_formatted) {
+    if (cmd->requires_format && (!vfs || !*vfs || !(*vfs)->is_formatted)) {
         printf(VFS_NOT_INITIALIZED_MSG);
         return false;
     }
@@ -63,7 +66,7 @@ int process_command_line(VFS **vfs, char *input) {
 
     if (!command_name) return false;
     for (int i = 0; i < command_count; i++) {
-        printf("Compare: '%s' and '%s'\n", command_name, commands[i].name);
+        // printf("Compare: '%s' and '%s'\n", command_name, commands[i].name);
         if (streq(command_name, commands[i].name)) {
 
             bool should_exit = false;
@@ -89,29 +92,32 @@ void cmd_help() {
     printf("Starting the program: \n\n");
     printf("./vfs [filesystem_name]\n\n");
     printf("Available commands: \n\n");
-    printf("cp s1 s2  --  Copies the file from path s1 to path s2\n");
-    printf("mv s1 s2  --  Moves the file from path s1 to path s2\n");
-    printf("rm s1  --  Deletes file s1\n");
-    printf("mkdir a1  --  Creates directory a1\n");
-    printf("rmdir a1  --  Deletes the directory a1\n");
-    printf("ls a1  --  Lists the contents of the directory a1\n");
-    printf("cat s1  --  Lists the contents of the file s1\n");
-    printf("cd a1  --  Changes the current folder to the directory at address a1\n");
-    printf("pwd  --  Lists the path to the current folder\n");
-    printf("info a1/s1  --  Lists information about the given file/folder\n");
-    printf("incp s1 s2  --  Moves a file from the real file system to the virtual one\n");
-    printf("outcp s1 s2  --  Moves a file from the virtual file system to the real one\n");
-    printf("load s1  --  Reads commands line by line from file s1 from the real file system\n");
-    printf("format 600M  --  Formats the virtual file system (VFS)\n");
-    printf("check  --  Performs a consistency check of the file system\n");
-    printf("size inode_id 600M  --  Changes the size of the i-node with the given ID to the size specified by the parameter\n");
+    for (int i = 0; i < command_count; i++) {
+        printf("%s",commands[i].help);
+    }
+
+    // printf("cp s1 s2  --  Copies the file from path s1 to path s2\n");
+    // printf("mv s1 s2  --  Moves the file from path s1 to path s2\n");
+    // printf("rm s1  --  Deletes file s1\n");
+    // printf("mkdir a1  --  Creates directory a1\n");
+    // printf("rmdir a1  --  Deletes the directory a1\n");
+    // printf("ls a1  --  Lists the contents of the directory a1\n");
+    // printf("cat s1  --  Lists the contents of the file s1\n");
+    // printf("cd a1  --  Changes the current folder to the directory at address a1\n");
+    // printf("pwd  --  Lists the path to the current folder\n");
+    // printf("info a1/s1  --  Lists information about the given file/folder\n");
+    // printf("incp s1 s2  --  Moves a file from the real file system to the virtual one\n");
+    // printf("outcp s1 s2  --  Moves a file from the virtual file system to the real one\n");
+    // printf("load s1  --  Reads commands line by line from file s1 from the real file system\n");
+    // printf("format 600M  --  Formats the virtual file system (VFS)\n");
+    // printf("check  --  Performs a consistency check of the file system\n");
+    // printf("size inode_id 600M  --  Changes the size of the i-node with the given ID to the size specified by the parameter\n");
 }
 
 
 
 
 void cmd_format_vfs(VFS **vfs, char **args) {
-    if (!args[0]) { printf("Missing argument!\n"); return; }
 
     int32_t vfs_size = atoi(args[0]);
     if (vfs_size < MIN_FS) {
@@ -156,16 +162,7 @@ void cmd_format_vfs(VFS **vfs, char **args) {
 
 
 void cmd_mkdir(VFS **vfs, char **args) {
-    if (!vfs || !*vfs || !(*vfs)->is_formatted) {
-        printf(VFS_NOT_INITIALIZED_MSG);
-        return;
-    }
-
     char *dirname = args[0];
-    if (str_empty(dirname)) {
-        printf(SRC_NOT_DEFINED_MSG);
-        return;
-    }
 
     directory *dir = NULL;
     char *name = NULL;
@@ -263,8 +260,7 @@ void cmd_ls(VFS **vfs, char **args) {
 
     if (!args || !args[0] || str_empty(args[0])) {
         dir = (*vfs)->current_dir;
-    }
-    else {
+    }else {
         if (parse_path(vfs, args[0], &name, &dir) == ERROR_CODE) {
             printf(PATH_NOT_FOUND_MSG);
             return;
@@ -295,27 +291,153 @@ void cmd_ls(VFS **vfs, char **args) {
         return;
     }
 
-    printf("Directories:\n");
-    dir_item *sub = dir->subdir;
-    if (!sub) printf("  <none>\n");
-
-    while (sub) {
-        printf("DIR: %s\n", sub->item_name);
-        sub = sub->next;
-    }
-
-    printf("\nFiles:\n");
-    dir_item *file = dir->file;
-    if (!file) printf("  <none>\n");
-
-    while (file) {
-        printf("FILE: %s\n", file->item_name);
-        file = file->next;
-    }
-
+    print_directory_content(dir);
     printf("\n");
 }
 
+void cmd_rmdir(VFS **vfs, char **args) {
+    char *dirname = args[0];
+
+    directory *dir = NULL;
+    char *name = NULL;
+
+
+    if (parse_path(vfs, dirname, &name, &dir) == ERROR_CODE) {
+        printf(PATH_NOT_FOUND_MSG);
+        return;
+    }
+
+    dir_item *finding_item = find_diritem(dir->subdir, name);
+    if (!finding_item) {
+        printf(FILE_NOT_FOUND_MSG);
+        return;
+    }
+
+    inode *nd = &(*vfs)->inodes[finding_item->inode];
+    if (!nd->isDirectory) {
+        printf(FILE_NOT_FOUND_MSG);
+        return;
+    }
+
+    directory *finding_dir = (*vfs)->all_dirs[finding_item->inode];
+    if (!finding_dir) {
+        printf(PATH_NOT_FOUND_MSG);
+        return;
+    }
+    if (finding_dir->file != NULL || finding_dir->subdir != NULL) {
+        printf(DIR_NOT_EMPTY_MSG);
+        return;
+    }
+
+    if (update_directory_in_file(vfs, dir, finding_item, false) == ERROR_CODE) {
+        printf(PATH_NOT_FOUND_MSG);
+        return;
+    }
+
+    update_bitmap_in_file(vfs, finding_item, 0, NULL, 0);
+
+    nd->nodeid      = ID_ITEM_FREE;
+    nd->isDirectory = 0;
+    nd->references  = 0;
+    nd->file_size   = 0;
+    nd->direct1 = nd->direct2 = nd->direct3 = nd->direct4 = nd->direct5 = ID_ITEM_FREE;
+    nd->indirect1 = nd->indirect2 = ID_ITEM_FREE;
+    write_inode_to_vfs(vfs, finding_item->inode);
+
+    dir_item *detached = remove_diritem(&dir->subdir, name);
+    if ((*vfs)->all_dirs[finding_item->inode]) {
+        free((*vfs)->all_dirs[finding_item->inode]);
+        (*vfs)->all_dirs[finding_item->inode] = NULL;
+    }
+    free(detached);
+
+    printf(OK_MSG);
+}
+
+void cmd_pwd(VFS **vfs, char **args) {
+    directory *cur = (*vfs)->current_dir;
+    char path[1024] = {0};
+    char temp[256];
+
+    if (cur->current->inode == 0) {
+        printf("/\n");
+        return;
+    }
+
+    while (cur != NULL) {
+        if (cur->current->inode != 0) {
+            snprintf(temp, sizeof(temp), "/%s", cur->current->item_name);
+
+            char new_path[1024] = {0};
+            strcpy(new_path, temp);
+            strcat(new_path, path);
+            strcpy(path, new_path);
+        }
+
+        if (cur == cur->parent) break;
+        cur = cur->parent;
+    }
+
+    if (strlen(path) == 0) {
+        strcpy(path, "/");
+    }
+
+    printf("%s\n", path);
+}
+
+void cmd_cd(VFS **vfs, char **args) {
+    char *path = args[0];
+    directory *dir = find_directory(vfs, path);
+    if (dir == NULL) {
+        printf(PATH_NOT_FOUND_MSG);
+        return;
+    }
+
+    (*vfs)->current_dir = dir;
+    printf(OK_MSG);
+}
+
+void cmd_info(VFS **vfs, char **args) {
+    char *path = args[0];
+    dir_item *item;
+    directory *dir = NULL;
+    char *name = NULL;
+
+    if (streq(path, ".")) {
+        print_dir_item_info(vfs, (*vfs)->current_dir->current);
+        return;
+    }
+
+    if (parse_path(vfs, path, &name, &dir) == ERROR_CODE || !dir) {
+        printf(PATH_NOT_FOUND_MSG);
+        return;
+    }
+
+    if (dir == (*vfs)->all_dirs[0] && strlen(name) == 0) {
+        print_dir_item_info(vfs, (*vfs)->all_dirs[0]->current);
+        return;
+    }
+
+    item = find_item_by_name(dir->file, name);
+    if (item != NULL) {
+        print_dir_item_info(vfs, item);
+        return;
+    }
+
+    item = find_item_by_name(dir->subdir, name);
+    if (item != NULL) {
+        print_dir_item_info(vfs, item);
+        return;
+    }
+
+    printf(FILE_NOT_FOUND_MSG);
+}
+
+void cmd_exit(VFS **vfs, char **args) {
+    printf("/--------------------\\\n");
+    printf("|   END OF PROGRAM   |\n");
+    printf("\\--------------------/\n\n");
+}
 
 void cmd_incp() {
 
@@ -331,12 +453,4 @@ void cmd_cp(){
 }
 
 
-
-void cmd_format(){
-}
-
-
-void cmd_exit() {
-
-}
 

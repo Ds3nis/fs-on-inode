@@ -21,6 +21,10 @@ directory *find_directory(VFS **vfs, char *path);
 dir_item *find_item_by_name(dir_item *first, const char *name);
 bool check_if_exists(directory *dir, char *name);
 int32_t *find_free_data_blocks(VFS** vfs, int count);
+void print_directory_content(directory *dir);
+dir_item *find_diritem(dir_item *item,char *name);
+dir_item *remove_diritem(dir_item **head, const char *name);
+void print_dir_item_info(VFS **vfs, dir_item *item);
 
 #endif //FS_ON_INODE_HELPERS_H
 

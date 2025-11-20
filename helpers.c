@@ -4,6 +4,8 @@
 #include "helpers.h"
 #include <stdio.h>
 
+#include "vfs.h"
+
 
 /*
  * Returns if string str1 equals str2
@@ -293,7 +295,6 @@ bool check_if_exists(directory *dir, char *name) {
     /* Loop through subdirs of the directory */
     item = dir->subdir;
     while (item != NULL) {
-        printf("Item subdir name %s and creating dir name %s" ,item->item_name, name);
         if (streq(name, item->item_name)) {
             return true;
         }
@@ -326,4 +327,121 @@ int32_t *find_free_data_blocks(VFS** vfs, int count) {
     return NULL;
 }
 
+void print_directory_content(directory *dir) {
+    printf("Directories:\n");
+    dir_item *sub = dir->subdir;
+    if (!sub) printf("  <none>\n");
 
+    while (sub) {
+        printf("DIR: %s\n", sub->item_name);
+        sub = sub->next;
+    }
+
+    printf("\nFiles:\n");
+    dir_item *file = dir->file;
+    if (!file) printf("  <none>\n");
+
+    while (file) {
+        printf("FILE: %s\n", file->item_name);
+        file = file->next;
+    }
+}
+
+dir_item *find_diritem(dir_item *item,char *name) {
+    if (item == NULL || name == NULL) {
+        return NULL;
+    }
+
+    dir_item *current = item;
+    while (current != NULL) {
+        if (strncmp(current->item_name, name, MAX_ITEM_NAME_LENGTH) == 0) {
+            return current;
+        }
+        current = current->next;
+    }
+
+    return NULL;
+}
+
+dir_item *remove_diritem(dir_item **head, const char *name) {
+    if (head == NULL || *head == NULL || name == NULL) {
+        return NULL;
+    }
+
+    dir_item *current = *head;
+    dir_item *prev = NULL;
+
+    while (current != NULL) {
+        if (strncmp(current->item_name, name, MAX_ITEM_NAME_LENGTH) == 0) {
+            if (prev == NULL) {
+                *head = current->next;
+            } else {
+                prev->next = current->next;
+            }
+            current->next = NULL;
+            return current;
+        }
+        prev = current;
+        current = current->next;
+    }
+
+    return NULL;
+}
+
+void print_dir_item_info(VFS **vfs, dir_item *item) {
+    inode node = (*vfs)->inodes[item->inode];
+
+    printf("Name: %s\n", item->item_name);
+    printf("Size: %d B\n", node.file_size);
+    printf("i-node: %d\n", node.nodeid);
+    printf("References: %d\n", node.references);
+    printf(node.isDirectory ? "Type: Directory\n" : "Type: File\n");
+
+    printf("Direct: ");
+    int printed = 0;
+    if (node.direct1 != ID_ITEM_FREE) { printf("%d", node.direct1); printed = 1; }
+    if (node.direct2 != ID_ITEM_FREE) { printf(printed ? ", %d" : "%d", node.direct2); printed = 1; }
+    if (node.direct3 != ID_ITEM_FREE) { printf(printed ? ", %d" : "%d", node.direct3); printed = 1; }
+    if (node.direct4 != ID_ITEM_FREE) { printf(printed ? ", %d" : "%d", node.direct4); printed = 1; }
+    if (node.direct5 != ID_ITEM_FREE) { printf(printed ? ", %d" : "%d", node.direct5); printed = 1; }
+    if (!printed) printf("NONE");
+    printf("\n");
+
+    printf("Indirect 1: ");
+    if (node.indirect1 != ID_ITEM_FREE) {
+        printf("(%d): ", node.indirect1);
+        seek_data_cluster(vfs, node.indirect1);
+        int32_t number;
+        int first = 1;
+        for (int i = 0; i < INT32_COUNT_IN_BLOCK; i++) {
+            vfs_read_int32(vfs, &number);
+            if (number == EMPTY_ADDRESS) break;
+            printf(first ? "%d" : ", %d", number);
+            first = 0;
+        }
+        if (first) printf("EMPTY");
+        printf("\n");
+    } else {
+        printf("FREE\n");
+    }
+
+    printf("Indirect 2: ");
+    if (node.indirect2 != ID_ITEM_FREE) {
+        printf("(%d): ", node.indirect2);
+        seek_data_cluster(vfs, node.indirect2);
+        int32_t number;
+        int first = 1;
+        for (int i = 0; i < INT32_COUNT_IN_BLOCK; i++) {
+            vfs_read_int32(vfs, &number);
+            if (number == EMPTY_ADDRESS) break;
+            printf(first ? "%d" : ", %d", number);
+            first = 0;
+        }
+        if (first) printf("EMPTY");
+        printf("\n");
+    } else {
+        printf("FREE\n");
+    }
+
+    printf("\n");
+}
