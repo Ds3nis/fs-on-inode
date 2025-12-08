@@ -29,6 +29,23 @@ int get_block_count_with_indirect(int block_count);
 void update_sizes_in_file(VFS** vfs, directory *dir, int32_t size);
 int get_last_block_size(int rest);
 bool file_exists (char *filename);
+void add_item_to_list(dir_item **list_head, dir_item *new_item);
+bool validate_new_item_name(char *name);
+bool allocate_new_inode_and_block(VFS **vfs, int *inode_id, int32_t *block);
+void init_directory_inode(inode *node, int id, int32_t block);
+bool create_directory_structure(VFS **vfs, directory *parent, char *name,
+                                int inode_id, directory **out_dir,
+                                dir_item **out_item);
+bool sync_to_disk(VFS **vfs, directory *parent,
+                                 dir_item *item, int inode_id,
+                                 int32_t *block, bool create);
+dir_item *find_directory_by_name(dir_item *dir, const char *name);
+void print_indirect_block(VFS **vfs, int32_t block);
+int count_used_blocks(VFS *v);
+int count_used_inodes(VFS *v);
+int count_directories(VFS *v);
+void reset_inode(inode *nd);
+bool stream_file_content(VFS **vfs, dir_item *file_item);
 
 #endif //FS_ON_INODE_HELPERS_H
 

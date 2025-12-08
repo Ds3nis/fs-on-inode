@@ -486,26 +486,34 @@ void vfs_write_inodes_to_file(VFS **vfs) {
 }
 
 
+/*
+ * Searches the inode table for the first free inode.
+ * Returns its index or ID_ITEM_FREE if none are available.
+ */
 int32_t vfs_find_free_inode(VFS **vfs) {
     for (int i = 0; i < (*vfs)->superblock->inode_count; i++) {
         if ((*vfs)->inodes[i].nodeid == ID_ITEM_FREE) {
             return i;
         }
     }
-
     return ID_ITEM_FREE;
 }
 
+
+/*
+ * Writes directory structure changes to the VFS file.
+ * If create == true, inserts a new directory entry.
+ * Otherwise removes an existing entry.
+ * Delegates the actual work to helper functions responsible for file layout.
+ */
 int update_directory_in_file(VFS** vfs, directory *dir, dir_item *item, bool create) {
-    if (create == true) {	// Store item (find free space)
+    if (create) {
         return create_directory_in_file(vfs, dir, item);
-    }
-    else {	// Remove item (find the item with the specific id)
+    } else {
         return remove_directory_from_file(vfs, dir, item);
     }
-
-    return ERROR_CODE;
 }
+
 
 
 int create_directory_in_file(VFS** vfs, directory *dir, dir_item *item) {
@@ -681,41 +689,50 @@ int remove_directory_from_file(VFS** vfs, directory *dir, dir_item *item) {
     return ERROR_CODE;
 }
 
+/*
+ * Updates the data bitmap both in memory and on disk for all blocks
+ * associated with a particular directory item.
+ * Supports direct and indirect blocks. Writes updated bitmap entries
+ * to the correct bitmap offsets inside the VFS file.
+ */
 void update_bitmap_in_file(VFS** vfs, dir_item *item, int8_t value, int32_t *data_blocks, int b_count) {
-    int i, block_count;
     int32_t *blocks;
+    int block_count;
 
+    // If block list not provided, resolve data blocks from inode
     if (!data_blocks) {
         blocks = get_data_blocks(vfs, item->inode, &block_count, NULL);
-    }
-    else {
+    } else {
         blocks = data_blocks;
         block_count = b_count;
     }
 
-    /* Write all blocks */
-    for (i = 0; i < block_count; i++) {
+    // Update direct data blocks
+    for (int i = 0; i < block_count; i++) {
         (*vfs)->data_bitmap[blocks[i]] = value;
         seek_set(vfs, (*vfs)->superblock->bitmap_start_address + blocks[i]);
         vfs_write_int8(vfs, &value);
     }
 
-
-    /* Indirect 1 data block */
+    // Update indirect block #1
     if ((*vfs)->inodes[item->inode].indirect1 != ID_ITEM_FREE) {
-        (*vfs)->data_bitmap[(*vfs)->inodes[item->inode].indirect1] = value;
-        seek_set(vfs, (*vfs)->superblock->bitmap_start_address + (*vfs)->inodes[item->inode].indirect1);
+        int32_t blk = (*vfs)->inodes[item->inode].indirect1;
+        (*vfs)->data_bitmap[blk] = value;
+        seek_set(vfs, (*vfs)->superblock->bitmap_start_address + blk);
         vfs_write_int8(vfs, &value);
     }
-    /* Indirect 2 data block */
+
+    // Update indirect block #2
     if ((*vfs)->inodes[item->inode].indirect2 != ID_ITEM_FREE) {
-        (*vfs)->data_bitmap[(*vfs)->inodes[item->inode].indirect2] = value;
-        seek_set(vfs, (*vfs)->superblock->bitmap_start_address + (*vfs)->inodes[item->inode].indirect2);
+        int32_t blk = (*vfs)->inodes[item->inode].indirect2;
+        (*vfs)->data_bitmap[blk] = value;
+        seek_set(vfs, (*vfs)->superblock->bitmap_start_address + blk);
         vfs_write_int8(vfs, &value);
     }
 
     flush_vfs(vfs);
 }
+
 
 /*
  * Initializes new i-node. Returns index of the last block.

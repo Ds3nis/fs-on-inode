@@ -18,6 +18,8 @@
 #define EMPTY_ADDRESS           0
 #define DIR_ENTRY_SIZE (sizeof(int32_t) + MAX_ITEM_NAME_LENGTH)
 #define MAX_DIR_ENTRIES_PER_CLUSTER (CLUSTER_SIZE / DIR_ENTRY_SIZE)
+#define MAX_PATH_LENGTH 4096
+#define MAX_LOAD_DEPTH 5
 
 #define EXIT_COMMAND "exit"
 #define HELP_COMMAND "help"
@@ -67,6 +69,8 @@
 #define VFS_LOADING "Loading virtual filesystem: %s\n"
 #define VFS_ERROR "Error loading virtual filesystem: %s\n"
 #define VFS_LOAD_SUCCESS "VFS successfully initialized.\n"
+#define NAME_TOO_LONG "Error: Name too long (max %d characters)\n"
+
 
 #define OK_MSG "OK \n"
 #define ERROR_CODE      -1

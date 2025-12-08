@@ -190,33 +190,42 @@ void check_sb_info(VFS **vfs) {
     printf("\n");
 }
 
+
+/*
+ * Parses the provided path and splits it into: parent directory (dir) and final name.
+ * Handles relative paths, absolute paths, and parent navigation (“..”).
+ * If path contains '/', extracts parent directory component and resolves it in the VFS.
+ * Returns NO_ERROR_CODE on success or ERROR_CODE if the path cannot be resolved.
+ */
 int parse_path(VFS **vfs, char *path, char **name, directory **dir) {
+    int length;
+    char buff[256];
+
     if (str_empty(path)) {
         return ERROR_CODE;
     }
 
     if (streq(path, "..")) {
-        *dir = (*vfs)->current_dir->parent;
         *name = "";
-        return NO_ERROR_CODE;
-    }
-
-    char *slash = strrchr(path, '/');
-
-    if (slash == NULL) {
-        *dir = (*vfs)->current_dir;
+        *dir = (*vfs)->current_dir->parent;
+    } else if ((*name = strrchr(path, '/')) == NULL) {	/* If there is no slash - Only filename/directory */
         *name = path;
-    } else {
-        *name = slash + 1;
-        int len = (int)(slash - path);
-        char buff[256];
-        memset(buff, 0, sizeof(buff));
-        strncpy(buff, path, len);
+        *dir = (*vfs)->current_dir;
+    }
+    else  {
+        length = strlen(path) - strlen(*name);
+        if (path[0] == '/') {
+            if (!strstr(path + 1, "/")) { /* If there is only root */
+                length = 1;
+            }
 
-        if (path[0] == '/' && len == 1) {
-            strcpy(buff, "/");
         }
 
+        *name = *name + 1;
+        memset(buff, '\0', 256);
+        strncpy(buff, path, length);
+
+        // Find the directory
         *dir = find_directory(vfs, buff);
         if (*dir == NULL) {
             return ERROR_CODE;
@@ -226,6 +235,20 @@ int parse_path(VFS **vfs, char *path, char **name, directory **dir) {
     return NO_ERROR_CODE;
 }
 
+
+/*
+ * Resolves a directory path into a directory* structure.
+ *
+ * Supports:
+ *   - Absolute paths ("/a/b/c")
+ *   - Relative paths ("a/b", "../x", "./y")
+ *   - Current directory "."
+ *   - Parent directory ".."
+ *
+ * The function walks through the path tokens and navigates through
+ * the directory tree. If at any point a directory does not exist,
+ * NULL is returned to indicate an invalid path.
+ */
 directory *find_directory(VFS **vfs, char *path) {
     if (str_empty(path)) {
         return NULL;
@@ -233,40 +256,53 @@ directory *find_directory(VFS **vfs, char *path) {
 
     directory *current;
 
+    // Start from root for absolute path
     if (path[0] == '/') {
         current = (*vfs)->all_dirs[0];
-        path++;
+        path++;  // skip leading '/'
         if (*path == '\0') {
-            return current;
+            return current; // path = "/"
         }
     } else {
+        // Otherwise start from current directory
         current = (*vfs)->current_dir;
     }
 
+    // Copy path into a temporary buffer for tokenization
     char buff[256];
     strncpy(buff, path, sizeof(buff) - 1);
     buff[sizeof(buff) - 1] = '\0';
 
+    // Process each folder name
     char *token = strtok(buff, "/");
     while (token != NULL) {
+
         if (streq(token, ".")) {
-        } else if (streq(token, "..")) {
+            // Stay in the same directory
+        }
+        else if (streq(token, "..")) {
+            // Move to parent directory
             current = current->parent;
-        } else {
-            dir_item *found = find_item_by_name(current->subdir, token);
+        }
+        else {
+            // Look for the subdirectory by name
+            dir_item *found = find_directory_by_name(current, token);
             if (found == NULL) {
-                return NULL;
+                return NULL; // Name not found
             }
+
             current = (*vfs)->all_dirs[found->inode];
             if (current == NULL) {
-                return NULL;
+                return NULL; // Corrupted or missing directory structure
             }
         }
+
         token = strtok(NULL, "/");
     }
 
     return current;
 }
+
 
 dir_item *find_item_by_name(dir_item *first, const char *name) {
     if (first == NULL || name == NULL) {
@@ -284,10 +320,15 @@ dir_item *find_item_by_name(dir_item *first, const char *name) {
     return NULL;
 }
 
+/*
+ * Checks whether an item with the given name already exists in the directory.
+ * Iterates through file items first, then subdirectory items.
+ * Returns true if name matches any entry, false otherwise.
+ */
 bool check_if_exists(directory *dir, char *name) {
     dir_item *item;
 
-    /* Loop through files of the directory */
+    // Check files
     item = dir->file;
     while (item != NULL) {
         if (streq(name, item->item_name)) {
@@ -296,7 +337,7 @@ bool check_if_exists(directory *dir, char *name) {
         item = item->next;
     }
 
-    /* Loop through subdirs of the directory */
+    // Check subdirectories
     item = dir->subdir;
     while (item != NULL) {
         if (streq(name, item->item_name)) {
@@ -307,20 +348,27 @@ bool check_if_exists(directory *dir, char *name) {
     return false;
 }
 
-int32_t *find_free_data_blocks(VFS** vfs, int count) {
-    int i, found_blocks = 0;
-    int32_t *blocks = calloc(count, sizeof(int32_t));
 
-    if (blocks == NULL) {
+/*
+ * Allocates a specified number of free data blocks.
+ * Scans the data bitmap starting from block 1 (block 0 reserved for root),
+ * and collects the required number of unused blocks.
+ * Returns an array of block indices or NULL if not enough blocks exist.
+ */
+int32_t *find_free_data_blocks(VFS** vfs, int count) {
+    int32_t *blocks = calloc(count, sizeof(int32_t));
+    if (!blocks) {
         printf(MEMORY_ERROR_MSG);
         return NULL;
     }
 
-    /* Find all data blocks */
-    for (i = 1; i < (*vfs)->superblock->data_cluster_count; i++) { /* Skip root */
+    int found_blocks = 0;
+
+    // Scan bitmap for free blocks
+    for (int i = 1; i < (*vfs)->superblock->data_cluster_count; i++) {
         if ((*vfs)->data_bitmap[i] == 0) {
-            blocks[found_blocks] = i;
-            found_blocks++;
+            blocks[found_blocks++] = i;
+
             if (found_blocks == count) {
                 return blocks;
             }
@@ -330,6 +378,7 @@ int32_t *find_free_data_blocks(VFS** vfs, int count) {
     free(blocks);
     return NULL;
 }
+
 
 void print_directory_content(directory *dir) {
     printf("Directories:\n");
@@ -392,6 +441,18 @@ dir_item *remove_diritem(dir_item **head, const char *name) {
     return NULL;
 }
 
+/*
+ * Prints full metadata of an item based on its directory entry.
+ * Displays:
+ *   - name, size, inode number and reference count
+ *   - whether the item is a file or directory
+ *   - all direct block addresses (or NONE)
+ *   - lists contents of indirect blocks (1st- and 2nd-level):
+ *       * reads the cluster containing addresses
+ *       * prints stored block numbers until EMPTY_ADDRESS
+ *
+ * Used for diagnostics and filesystem debugging.
+ */
 void print_dir_item_info(VFS **vfs, dir_item *item) {
     inode node = (*vfs)->inodes[item->inode];
 
@@ -412,43 +473,36 @@ void print_dir_item_info(VFS **vfs, dir_item *item) {
     printf("\n");
 
     printf("Indirect 1: ");
-    if (node.indirect1 != ID_ITEM_FREE) {
-        printf("(%d): ", node.indirect1);
-        seek_data_cluster(vfs, node.indirect1);
-        int32_t number;
-        int first = 1;
-        for (int i = 0; i < INT32_COUNT_IN_BLOCK; i++) {
-            vfs_read_int32(vfs, &number);
-            if (number == EMPTY_ADDRESS) break;
-            printf(first ? "%d" : ", %d", number);
-            first = 0;
-        }
-        if (first) printf("EMPTY");
-        printf("\n");
-    } else {
-        printf("FREE\n");
-    }
+    print_indirect_block(vfs, node.indirect1);
 
     printf("Indirect 2: ");
-    if (node.indirect2 != ID_ITEM_FREE) {
-        printf("(%d): ", node.indirect2);
-        seek_data_cluster(vfs, node.indirect2);
-        int32_t number;
-        int first = 1;
-        for (int i = 0; i < INT32_COUNT_IN_BLOCK; i++) {
-            vfs_read_int32(vfs, &number);
-            if (number == EMPTY_ADDRESS) break;
-            printf(first ? "%d" : ", %d", number);
-            first = 0;
-        }
-        if (first) printf("EMPTY");
-        printf("\n");
-    } else {
-        printf("FREE\n");
-    }
+    print_indirect_block(vfs, node.indirect2);
+
 
     printf("\n");
 }
+
+void print_indirect_block(VFS **vfs, int32_t block) {
+    if (block == ID_ITEM_FREE) {
+        printf("FREE\n");
+        return;
+    }
+
+    printf("(%d): ", block);
+    seek_data_cluster(vfs, block);
+
+    int32_t val;
+    int first = 1;
+    for (int i = 0; i < INT32_COUNT_IN_BLOCK; i++) {
+        vfs_read_int32(vfs, &val);
+        if (val == EMPTY_ADDRESS) break;
+        printf(first ? "%d" : ", %d", val);
+        first = 0;
+    }
+    if (first) printf("EMPTY");
+    printf("\n");
+}
+
 
 int get_block_count_with_indirect(int block_count) {
     if (block_count < 5) { /* Only direct */
@@ -487,4 +541,214 @@ int get_last_block_size(int rest) {
 bool file_exists (char *filename) {
     struct stat   buffer;
     return (stat (filename, &buffer) == 0);
+}
+
+void add_item_to_list(dir_item **list_head, dir_item *new_item) {
+    if (!list_head || !new_item) return;
+
+    dir_item **current = list_head;
+    while (*current) {
+        current = &((*current)->next);
+    }
+    *current = new_item;
+}
+
+bool validate_new_item_name(char *name) {
+    if (strlen(name) >= MAX_ITEM_NAME_LENGTH) {
+        printf(NAME_TOO_LONG, MAX_ITEM_NAME_LENGTH - 1);
+        return false;
+    }
+    return true;
+}
+
+bool allocate_new_inode_and_block(VFS **vfs, int *inode_id, int32_t *block) {
+    *inode_id = vfs_find_free_inode(vfs);
+    if (*inode_id == -1) {
+        printf(NO_FREE_INODE);
+        return false;
+    }
+
+    int32_t *blk = find_free_data_blocks(vfs, 1);
+    if (!blk) {
+        printf(NOT_ENOUGH_BLOCKS_MSG);
+        return false;
+    }
+
+    *block = blk[0];
+    free(blk);
+    return true;
+}
+
+void init_directory_inode(inode *node, int id, int32_t block) {
+    memset(node, 0, sizeof(inode));
+    node->nodeid = id;
+    node->isDirectory = true;
+    node->file_size = 0;
+    node->references = 1;
+    node->direct1 = block;
+    node->direct2 = node->direct3 = node->direct4 =
+    node->direct5 = node->indirect1 = node->indirect2 = ID_ITEM_FREE;
+}
+
+bool create_directory_structure(VFS **vfs, directory *parent, char *name,
+                                int inode_id, directory **out_dir,
+                                dir_item **out_item)
+{
+    dir_item *item = create_directory_item(inode_id, name);
+    if (!item) {
+        printf(MEMORY_ERROR_MSG);
+        return false;
+    }
+
+    directory *dir = calloc(1, sizeof(directory));
+    if (!dir) {
+        free(item);
+        printf(MEMORY_ERROR_MSG);
+        return false;
+    }
+
+    dir->current = item;
+    dir->parent = parent;
+
+    (*vfs)->all_dirs[inode_id] = dir;
+
+    *out_dir = dir;
+    *out_item = item;
+
+    return true;
+}
+
+bool sync_to_disk(VFS **vfs, directory *parent,dir_item *item, int inode_id,int32_t *block, bool create)
+{
+    if (update_directory_in_file(vfs, parent, item, create) == ERROR_CODE) {
+        return false;
+    }
+    update_bitmap_in_file(vfs, item, 1, block, 1);
+    write_inode_to_vfs(vfs, inode_id);
+    flush_vfs(vfs);
+    return true;
+}
+
+/*
+ * Searches for a subdirectory with the given name inside 'dir'.
+ * Returns dir_item* if found, NULL if not found.
+ */
+dir_item *find_directory_by_name(dir_item *dir, const char *name) {
+    dir_item *sub = dir;
+
+    while (sub) {
+        if (streq(sub->item_name, name)) {
+            return sub;
+        }
+        sub = sub->next;
+    }
+    return NULL;
+}
+
+/*
+ * Resets inode fields to the "free" state.
+ */
+void reset_inode(inode *nd) {
+    nd->nodeid      = ID_ITEM_FREE;
+    nd->isDirectory = 0;
+    nd->references  = 0;
+    nd->file_size   = 0;
+
+    nd->direct1 = nd->direct2 = nd->direct3 = nd->direct4 = nd->direct5 = ID_ITEM_FREE;
+    nd->indirect1 = nd->indirect2 = ID_ITEM_FREE;
+}
+
+/*
+ * Counts how many data blocks are currently marked as used in the bitmap.
+ * A block is considered used if its bitmap entry is non-zero.
+ */
+int count_used_blocks(VFS *v) {
+    int used = 0;
+    for (int i = 0; i < v->superblock->data_cluster_count; i++)
+        if (v->data_bitmap[i]) used++;
+    return used;
+}
+
+/*
+ * Counts how many inodes are currently allocated.
+ * An inode is treated as used if its nodeid is not equal to ID_ITEM_FREE.
+ */
+int count_used_inodes(VFS *v) {
+    int used = 0;
+    for (int i = 0; i < v->superblock->inode_count; i++)
+        if (v->inodes[i].nodeid != ID_ITEM_FREE) used++;
+    return used;
+}
+
+/*
+ * Counts how many directory structures are present in memory.
+ * A directory exists if the corresponding pointer in all_dirs[] is non-NULL.
+ */
+int count_directories(VFS *v) {
+    int count = 0;
+    for (int i = 0; i < v->superblock->inode_count; i++)
+        if (v->all_dirs[i] != NULL) count++;
+    return count;
+}
+
+bool stream_file_content(VFS **vfs, dir_item *file_item) {
+    if (!vfs || !*vfs || !file_item) {
+        return false;
+    }
+
+    inode *node = &(*vfs)->inodes[file_item->inode];
+    int32_t file_size = node->file_size;
+
+    if (file_size == 0) {
+        return true;
+    }
+
+    int block_count = 0;
+    int32_t *blocks = get_data_blocks(vfs, file_item->inode, &block_count, NULL);
+    if (!blocks || block_count == 0) {
+        printf("Error: Failed to get data blocks for file\n");
+        return false;
+    }
+
+    char buffer[CLUSTER_SIZE];
+    int32_t bytes_remaining = file_size;
+    bool success = true;
+
+    for (int i = 0; i < block_count && bytes_remaining > 0; i++) {
+        if (seek_data_cluster(vfs, blocks[i]) != 0) {
+            printf("Error: Failed to seek to cluster %d\n", blocks[i]);
+            success = false;
+            break;
+        }
+
+        int32_t bytes_to_read = (bytes_remaining < CLUSTER_SIZE) ?
+                                bytes_remaining : CLUSTER_SIZE;
+
+
+        size_t read = vfs_read(vfs, buffer, 1, bytes_to_read);
+        if (read != bytes_to_read) {
+            printf("Error: Failed to read from cluster %d\n", blocks[i]);
+            success = false;
+            break;
+        }
+
+        size_t written = fwrite(buffer, 1, bytes_to_read, stdout);
+        if (written != bytes_to_read) {
+            printf("Error: Failed to write to stdout\n");
+            success = false;
+            break;
+        }
+
+        bytes_remaining -= bytes_to_read;
+    }
+
+    fflush(stdout);
+    free(blocks);
+
+    if (bytes_remaining > 0) {
+        printf("\nWarning: Not all data was read (%d bytes remaining)\n", bytes_remaining);
+        return false;
+    }
+
+    return success;
 }
