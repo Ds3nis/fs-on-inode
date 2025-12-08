@@ -25,6 +25,10 @@ void print_directory_content(directory *dir);
 dir_item *find_diritem(dir_item *item,char *name);
 dir_item *remove_diritem(dir_item **head, const char *name);
 void print_dir_item_info(VFS **vfs, dir_item *item);
+int get_block_count_with_indirect(int block_count);
+void update_sizes_in_file(VFS** vfs, directory *dir, int32_t size);
+int get_last_block_size(int rest);
+bool file_exists (char *filename);
 
 #endif //FS_ON_INODE_HELPERS_H
 

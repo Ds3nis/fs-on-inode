@@ -32,7 +32,7 @@ void rewind_vfs(VFS **vfs);
 void flush_vfs(VFS **vfs);
 int vfs_seek_from_start(VFS **vfs, long offset);
 void vfs_init_inodes(VFS **vfs);
-void vfs_init_root_directory(VFS **vfs);
+bool vfs_init_root_directory(VFS **vfs);
 bool vfs_init_memory_structures(VFS **vfs, int32_t vfs_size);
 void vfs_write_superblock_to_file(VFS **vfs);
 void vfs_write_bitmaps_to_file(VFS **vfs);
@@ -42,4 +42,6 @@ int update_directory_in_file(VFS** vfs, directory *dir, dir_item *item, bool cre
 int create_directory_in_file(VFS** vfs, directory *dir, dir_item *item);
 int remove_directory_from_file(VFS** vfs, directory *dir, dir_item *item);
 void update_bitmap_in_file(VFS** vfs, dir_item *item, int8_t value, int32_t *data_blocks, int b_count);
+int initialize_inode(VFS** vfs, int32_t inode_id, int32_t size, int block_count, int32_t *blocks);
+int32_t *alloc_free_clusters(VFS **vfs, int count);
 #endif //FS_ON_INODE_VFS_H

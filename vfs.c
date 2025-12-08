@@ -303,12 +303,16 @@ size_t write_vfs(VFS **vfs, const void * ptr, size_t size, size_t count) {
 }
 
 
+/*
+ * Writes a single inode to its correct position on disk.
+ * Converts the in-memory inode struct into serialized fields.
+ */
 void write_inode_to_vfs(VFS **vfs, int id) {
     vfs_seek_from_start(vfs, (*vfs)->superblock->inode_start_address + id * INODE_SIZE);
 
     vfs_write_int32(vfs, &((*vfs)->inodes[id].nodeid));
-    vfs_write_int8(vfs, &((*vfs)->inodes[id].isDirectory));
-    vfs_write_int8(vfs, &((*vfs)->inodes[id].references));
+    vfs_write_int8 (vfs, &((*vfs)->inodes[id].isDirectory));
+    vfs_write_int8 (vfs, &((*vfs)->inodes[id].references));
     vfs_write_int32(vfs, &((*vfs)->inodes[id].file_size));
     vfs_write_int32(vfs, &((*vfs)->inodes[id].direct1));
     vfs_write_int32(vfs, &((*vfs)->inodes[id].direct2));
@@ -320,6 +324,7 @@ void write_inode_to_vfs(VFS **vfs, int id) {
 
     flush_vfs(vfs);
 }
+
 
 size_t vfs_write_int32(VFS **vfs, const void *ptr) {
     return fwrite(ptr, sizeof(int32_t), 1, (*vfs)->vfs_file);
@@ -364,28 +369,34 @@ int vfs_seek_from_start(VFS **vfs, long offset) {
     return fseek((*vfs)->vfs_file, offset, SEEK_SET);
 }
 
+/*
+ * Resets the entire inode table.
+ * Marks each inode as unused and clears all block references.
+ */
 void vfs_init_inodes(VFS **vfs) {
-    // initialize all inodes as free
     for (int32_t i = 0; i < (*vfs)->superblock->inode_count; ++i) {
-        (*vfs)->inodes[i].nodeid = ID_ITEM_FREE;
-        (*vfs)->inodes[i].isDirectory = 0;
-        (*vfs)->inodes[i].references = 0;
-        (*vfs)->inodes[i].file_size = 0;
-        (*vfs)->inodes[i].direct1 = ID_ITEM_FREE;
-        (*vfs)->inodes[i].direct2 = ID_ITEM_FREE;
-        (*vfs)->inodes[i].direct3 = ID_ITEM_FREE;
-        (*vfs)->inodes[i].direct4 = ID_ITEM_FREE;
-        (*vfs)->inodes[i].direct5 = ID_ITEM_FREE;
-        (*vfs)->inodes[i].indirect1 = ID_ITEM_FREE;
-        (*vfs)->inodes[i].indirect2 = ID_ITEM_FREE;
+        inode *n = &(*vfs)->inodes[i];
+        n->nodeid = ID_ITEM_FREE;
+        n->isDirectory = 0;
+        n->references = 0;
+        n->file_size = 0;
+
+        n->direct1 = n->direct2 = n->direct3 = n->direct4 = n->direct5 = ID_ITEM_FREE;
+        n->indirect1 = n->indirect2 = ID_ITEM_FREE;
     }
 }
 
-void vfs_init_root_directory(VFS **vfs) {
+/*
+ * Creates and initializes the root directory (inode 0).
+ * Links directory structures in memory, marks cluster 0 as used,
+ * and sets up the root inode to be a directory located in cluster 0.
+ */
+bool vfs_init_root_directory(VFS **vfs) {
     directory *root = calloc(1, sizeof(directory));
     dir_item *root_item = create_directory_item(0, "/");
+    if (!root_item || !root) return false;
 
-    root->parent = root;
+    root->parent = root;      // root's parent is itself
     root->current = root_item;
     root->subdir = NULL;
     root->file = NULL;
@@ -393,17 +404,27 @@ void vfs_init_root_directory(VFS **vfs) {
     (*vfs)->current_dir = root;
     (*vfs)->all_dirs[0] = root;
 
+    // Mark cluster 0 as used
+    memset((*vfs)->data_bitmap, 0, (*vfs)->superblock->cluster_count);
     (*vfs)->data_bitmap[0] = 1;
+
+    // Configure root inode
     inode *root_inode = &(*vfs)->inodes[0];
     root_inode->nodeid = 0;
     root_inode->isDirectory = 1;
     root_inode->references = 1;
     root_inode->file_size = 0;
     root_inode->direct1 = 0;
+
+    return true;
 }
 
 
-
+/*
+ * Allocates and initializes core memory structures of the filesystem.
+ * Builds the superblock, bitmap array, inode table, directory table,
+ * and initializes all inodes including the root directory.
+ */
 bool vfs_init_memory_structures(VFS **vfs, int32_t vfs_size) {
     (*vfs)->superblock = superblock_init(vfs_size);
     if (!(*vfs)->superblock) return false;
@@ -415,13 +436,18 @@ bool vfs_init_memory_structures(VFS **vfs, int32_t vfs_size) {
     if (!(*vfs)->data_bitmap || !(*vfs)->inodes || !(*vfs)->all_dirs)
         return false;
 
+    // Mark all inodes as free
     vfs_init_inodes(vfs);
 
-    vfs_init_root_directory(vfs);
-
-    return true;
+    // Create root inode + root directory structure
+    return vfs_init_root_directory(vfs);
 }
 
+
+/*
+ * Writes superblock metadata to the beginning of the VFS file.
+ * Saves all structural fields in a fixed layout.
+ */
 void vfs_write_superblock_to_file(VFS **vfs) {
     write_vfs(vfs, (*vfs)->superblock->signature, sizeof(char), SIGNATURE_LENGTH);
     vfs_write_int32(vfs, &(*vfs)->superblock->disk_size);
@@ -436,17 +462,29 @@ void vfs_write_superblock_to_file(VFS **vfs) {
     vfs_write_int32(vfs, &(*vfs)->superblock->data_start_address);
 }
 
+
+/*
+ * Stores the full data bitmap into the VFS file.
+ * Bitmap is written starting from bitmap_start_address.
+ */
 void vfs_write_bitmaps_to_file(VFS **vfs) {
     vfs_seek_from_start(vfs, (*vfs)->superblock->bitmap_start_address);
-    fwrite((*vfs)->data_bitmap, sizeof(int8_t), (*vfs)->superblock->cluster_count, (*vfs)->vfs_file);
+    fwrite((*vfs)->data_bitmap, sizeof(int8_t),
+           (*vfs)->superblock->cluster_count, (*vfs)->vfs_file);
 }
 
+
+/*
+ * Writes the entire inode table to the VFS file.
+ * Exports every inode sequentially using write_inode_to_vfs().
+ */
 void vfs_write_inodes_to_file(VFS **vfs) {
     vfs_seek_from_start(vfs, (*vfs)->superblock->inode_start_address);
     for (int i = 0; i < (*vfs)->superblock->inode_count; i++) {
         write_inode_to_vfs(vfs, i);
     }
 }
+
 
 int32_t vfs_find_free_inode(VFS **vfs) {
     for (int i = 0; i < (*vfs)->superblock->inode_count; i++) {
@@ -677,4 +715,89 @@ void update_bitmap_in_file(VFS** vfs, dir_item *item, int8_t value, int32_t *dat
     }
 
     flush_vfs(vfs);
+}
+
+/*
+ * Initializes new i-node. Returns index of the last block.
+ */
+int initialize_inode(VFS** vfs, int32_t inode_id, int32_t size, int block_count, int32_t *blocks) {
+    int tmp_block_count;
+    int last_data_block;
+
+    inode *node = &((*vfs)->inodes[inode_id]);
+
+    int block_count_with_indirect = get_block_count_with_indirect(block_count);
+
+    node->nodeid = inode_id;
+    node->isDirectory = 0;
+    node->references = 1;
+    node->file_size = size;
+    node->direct1 = blocks[0]; /* First block is always used */
+
+    last_data_block = 0;
+    if (block_count > 1) {
+        node->direct2 = blocks[1];
+        last_data_block = 1;
+    }
+
+    if (block_count > 2) {
+        node->direct3 = blocks[2];
+        last_data_block = 2;
+    }
+
+    if (block_count > 3) {
+        node->direct4 = blocks[3];
+        last_data_block = 3;
+    }
+
+    if (block_count > 4) {
+        node->direct5 = blocks[4];
+        last_data_block = 4; /* This is the last data block. If we have partial data, we store them always in last direct block */
+    }
+
+    if (block_count > 5) {
+        node->indirect1 = blocks[block_count_with_indirect - 1]; /* Write address of first indirect block to indirect1 */
+    }
+
+    if (block_count > (CLUSTER_SIZE / sizeof(int32_t) + 5)) {
+        node->indirect2 = blocks[block_count_with_indirect - 2]; /* Use second to last block to write indirect 2*/
+        seek_data_cluster(vfs, node->indirect1);
+        write_vfs(vfs, &blocks[5], sizeof(int32_t), CLUSTER_SIZE / 4);
+
+        tmp_block_count = block_count - (CLUSTER_SIZE / sizeof(int32_t) + 5);
+        seek_data_cluster(vfs, node->indirect2);
+        write_vfs(vfs, &blocks[(CLUSTER_SIZE / sizeof(int32_t) + 5)], sizeof(int32_t), tmp_block_count);
+    }
+    else  {
+        tmp_block_count = block_count - 5;
+        seek_data_cluster(vfs, node->indirect1);
+        write_vfs(vfs,&blocks[5], sizeof(int32_t), tmp_block_count);
+    }
+
+    return last_data_block;
+}
+
+int32_t *alloc_free_clusters(VFS **vfs, int count) {
+    if (vfs == NULL || *vfs == NULL || count <= 0) {
+        return NULL;
+    }
+
+    int32_t *clusters = calloc(count, sizeof(int32_t));
+    if (!clusters) {
+        fprintf(stderr, "%s", MEMORY_ERROR_MSG);
+        return NULL;
+    }
+
+    int found = 0;
+    for (int i = 1; i < (*vfs)->superblock->data_cluster_count; i++) {
+        if ((*vfs)->data_bitmap[i] == 0) {
+            clusters[found++] = i;
+            if (found == count) {
+                return clusters;
+            }
+        }
+    }
+
+    free(clusters);
+    return NULL;
 }

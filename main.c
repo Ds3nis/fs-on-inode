@@ -15,7 +15,9 @@ VFS *current_vfs = NULL;
 
 
 /*
- * Main command loop — handles user input and dispatches commands
+ * Main command loop of the virtual file system.
+ * Repeatedly prompts the user for input, parses
+ * and executes commands until the user types "exit".
  */
 void run_shell() {
     while (1) {
@@ -36,8 +38,11 @@ void run_shell() {
     }
 }
 
+
 /*
- * Shows program banner
+ * Prints an introductory banner with basic
+ * program information and instructions for the user.
+ * Called once at program startup.
  */
 void show_banner() {
     printf("\n");
@@ -52,16 +57,18 @@ void show_banner() {
     printf("=====================================\n\n");
 }
 
+
 /*
- * Program entry point
+ * Program entry point.
  */
 int main(int argc, char *argv[]) {
     show_banner();
 
     if (argc == 2) {
         char *filename = argv[1];
-        printf("Loading virtual filesystem: %s\n", filename);
+        printf(VFS_LOADING, filename);
 
+        // Load or initialize the virtual filesystem
         initialize_vfs(&current_vfs, filename);
         run_shell();
     } else {
