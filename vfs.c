@@ -234,17 +234,30 @@ bool load_directory_from_vfs(VFS **vfs, directory *dir, int inode_id) {
 
 
 
+/*
+ * Collects all data block indices belonging to a file:
+ *  - First copies all direct pointers (up to 5)
+ *  - Then loads all references from the first indirect block
+ *  - Finally resolves two-level indirect addressing (indirect2)
+ *
+ * Returns a dynamically allocated array of block indices and stores
+ * the number of blocks in `block_count`.
+ *
+ * Caller is responsible for freeing the returned array.
+ */
 int32_t *get_data_blocks(VFS **vfs, int32_t nodeid, int *block_count, int *rest) {
     inode *node = &(*vfs)->inodes[nodeid];
     if (!node) return NULL;
 
-    int max_blocks = 5 + (CLUSTER_SIZE / 4) + (CLUSTER_SIZE / 4) * (CLUSTER_SIZE / 4);
+    int max_blocks =
+        5 + (CLUSTER_SIZE / 4) + (CLUSTER_SIZE / 4) * (CLUSTER_SIZE / 4);
+
     int32_t *blocks = calloc(max_blocks, sizeof(int32_t));
     if (!blocks) return NULL;
 
     int count = 0;
 
-
+    // Direct pointers
     int32_t *directs[] = {
         &node->direct1, &node->direct2, &node->direct3,
         &node->direct4, &node->direct5
@@ -254,6 +267,7 @@ int32_t *get_data_blocks(VFS **vfs, int32_t nodeid, int *block_count, int *rest)
             blocks[count++] = *directs[i];
     }
 
+    // Single indirect
     if (node->indirect1 != ID_ITEM_FREE) {
         seek_data_cluster(vfs, node->indirect1);
         for (int i = 0; i < CLUSTER_SIZE / 4; i++) {
@@ -264,6 +278,7 @@ int32_t *get_data_blocks(VFS **vfs, int32_t nodeid, int *block_count, int *rest)
         }
     }
 
+    // Double indirect
     if (node->indirect2 != ID_ITEM_FREE) {
         seek_data_cluster(vfs, node->indirect2);
         for (int i = 0; i < CLUSTER_SIZE / 4; i++) {
@@ -284,6 +299,7 @@ int32_t *get_data_blocks(VFS **vfs, int32_t nodeid, int *block_count, int *rest)
     *block_count = count;
     return blocks;
 }
+
 
 int seek_data_cluster(VFS **vfs, int block_number) {
     return seek_set(vfs, (*vfs)->superblock->data_start_address + block_number * CLUSTER_SIZE);

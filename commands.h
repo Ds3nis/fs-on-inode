@@ -98,11 +98,19 @@ void cmd_load(VFS **vfs, char **args);
 void cmd_incp(VFS **vfs, char **args);
 void cmd_outcp(VFS **vfs, char **args);
 
-
+/*
+ * Prints the content of a file from the virtual filesystem.
+ */
 void cmd_cat(VFS **vfs, char **args);
 
 void cmd_cp(VFS **vfs, char **args);
+
+/*
+ * Moves a file inside the virtual filesystem.
+ */
 void cmd_mv(VFS **vfs, char **args);
+
+
 void cmd_rm(VFS **vfs, char **args);
 
 /*

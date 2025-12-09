@@ -286,7 +286,7 @@ directory *find_directory(VFS **vfs, char *path) {
         }
         else {
             // Look for the subdirectory by name
-            dir_item *found = find_directory_by_name(current, token);
+            dir_item *found = find_directory_by_name(current->subdir, token);
             if (found == NULL) {
                 return NULL; // Name not found
             }
@@ -504,18 +504,25 @@ void print_indirect_block(VFS **vfs, int32_t block) {
 }
 
 
-int get_block_count_with_indirect(int block_count) {
-    if (block_count < 5) { /* Only direct */
-        return block_count;
-    } else if ((block_count > 5) && (block_count <= CLUSTER_SIZE / sizeof(int32_t) + 5)) { /* One indirect */
-        return block_count + 1;
-    } else { /* Two indirects */
-        return block_count + 2;
+int calculate_required_clusters(int data_blocks) {
+    if (data_blocks <= 5) {
+        return data_blocks;  // Тільки direct
+    }
+    else if (data_blocks <= (CLUSTER_SIZE / 4) + 5) {
+        return data_blocks + 1;  // + indirect1
+    }
+    else {
+        return data_blocks + 2;  // + indirect1 + indirect2
     }
 }
 
+
 /*
- * goes up the hierarchy updating all size sof the directories
+ * Propagates a file size change upward through the directory tree.
+ * Every directory maintains the total size of its contents via file_size.
+ *
+ * Walks from the given directory up to the root and adjusts file_size
+ * for each ancestor, writing updated inode information to disk.
  */
 void update_sizes_in_file(VFS** vfs, directory *dir, int32_t size) {
     directory *d = dir;
@@ -542,6 +549,7 @@ bool file_exists (char *filename) {
     struct stat   buffer;
     return (stat (filename, &buffer) == 0);
 }
+
 
 void add_item_to_list(dir_item **list_head, dir_item *new_item) {
     if (!list_head || !new_item) return;
@@ -633,7 +641,7 @@ bool sync_to_disk(VFS **vfs, directory *parent,dir_item *item, int inode_id,int3
  * Searches for a subdirectory with the given name inside 'dir'.
  * Returns dir_item* if found, NULL if not found.
  */
-dir_item *find_directory_by_name(dir_item *dir, const char *name) {
+dir_item *find_directory_by_name(dir_item *dir, char *name) {
     dir_item *sub = dir;
 
     while (sub) {
@@ -691,6 +699,15 @@ int count_directories(VFS *v) {
     return count;
 }
 
+/*
+ * Streams the contents of a file to stdout.
+ *  - Retrieves all allocated data blocks for the file
+ *  - Iterates over each block and reads only the required number of bytes
+ *  - Handles files of any size, including those spanning multiple clusters
+ *  - Supports direct, indirect1 and indirect2 block lists
+ *
+ * Returns true on full success or false if any cluster cannot be read.
+ */
 bool stream_file_content(VFS **vfs, dir_item *file_item) {
     if (!vfs || !*vfs || !file_item) {
         return false;
@@ -700,7 +717,7 @@ bool stream_file_content(VFS **vfs, dir_item *file_item) {
     int32_t file_size = node->file_size;
 
     if (file_size == 0) {
-        return true;
+        return true; // empty file
     }
 
     int block_count = 0;
@@ -715,15 +732,15 @@ bool stream_file_content(VFS **vfs, dir_item *file_item) {
     bool success = true;
 
     for (int i = 0; i < block_count && bytes_remaining > 0; i++) {
+        // Seek to correct cluster
         if (seek_data_cluster(vfs, blocks[i]) != 0) {
             printf("Error: Failed to seek to cluster %d\n", blocks[i]);
             success = false;
             break;
         }
 
-        int32_t bytes_to_read = (bytes_remaining < CLUSTER_SIZE) ?
-                                bytes_remaining : CLUSTER_SIZE;
-
+        int32_t bytes_to_read =
+            (bytes_remaining < CLUSTER_SIZE) ? bytes_remaining : CLUSTER_SIZE;
 
         size_t read = vfs_read(vfs, buffer, 1, bytes_to_read);
         if (read != bytes_to_read) {
@@ -732,8 +749,8 @@ bool stream_file_content(VFS **vfs, dir_item *file_item) {
             break;
         }
 
-        size_t written = fwrite(buffer, 1, bytes_to_read, stdout);
-        if (written != bytes_to_read) {
+        // Print to stdout
+        if (fwrite(buffer, 1, bytes_to_read, stdout) != bytes_to_read) {
             printf("Error: Failed to write to stdout\n");
             success = false;
             break;
@@ -751,4 +768,196 @@ bool stream_file_content(VFS **vfs, dir_item *file_item) {
     }
 
     return success;
+}
+
+dir_item *find_item_in_directory(directory *parent, char *name) {
+    dir_item *item;
+
+    // Check files
+    item = parent->file;
+    while (item != NULL) {
+        if (streq(name, item->item_name)) {
+            return item;
+        }
+        item = item->next;
+    }
+
+    // Check subdirectories
+    item = parent->subdir;
+    while (item != NULL) {
+        if (streq(name, item->item_name)) {
+            return item;
+        }
+        item = item->next;
+    }
+    return NULL;
+}
+
+
+/*
+ * Checks whether moving a directory into dest_dir would cause
+ * a cyclic structure (i.e., moving folder A into its own subfolder).
+ *
+ * Only applies to directories; moving files always returns false.
+ *
+ * Walks upward from dest_dir through parent pointers
+ * and detects if any directory in the chain matches src_inode.
+ */
+bool is_circular_move(VFS **vfs, int32_t src_inode, directory *dest_dir) {
+    if (!(*vfs)->inodes[src_inode].isDirectory) {
+        return false;
+    }
+
+    directory *curr = dest_dir;
+    while (curr != NULL) {
+        if (curr->current && curr->current->inode == src_inode) {
+            return true;
+        }
+        curr = curr->parent;
+    }
+
+    return false;
+}
+
+/*
+ * Removes a dir_item from a linked list of directory entries.
+ *  - Searches for an item with the given name
+ *  - Detaches it from the list
+ *  - Returns the removed node via 'removed_item'
+ *
+ * Does not free memory, so the caller can reinsert the item elsewhere
+ * (as required for a move operation).
+ */
+bool remove_item_from_list(dir_item **head, const char *name, dir_item **removed_item) {
+    dir_item **curr_ptr = head;
+
+    while (*curr_ptr != NULL) {
+        if (streq((*curr_ptr)->item_name, name)) {
+            *removed_item = *curr_ptr;
+            *curr_ptr = (*curr_ptr)->next;
+            (*removed_item)->next = NULL;
+            return true;
+        }
+        curr_ptr = &((*curr_ptr)->next);
+    }
+
+    return false;
+}
+
+void safe_copy_name(char *dest, const char *src, size_t max_len) {
+    strncpy(dest, src, max_len - 1);
+    dest[max_len - 1] = '\0';
+}
+
+static int zero_data_blocks(VFS **vfs, int32_t *blocks, int block_count) {
+    static char zero[CLUSTER_SIZE] = {0};
+
+    for (int i = 0; i < block_count; i++) {
+        if (blocks[i] == ID_ITEM_FREE) continue;
+
+        if (seek_data_cluster(vfs, blocks[i]) == ERROR_CODE) {
+            return ERROR_CODE;
+        }
+        if (write_vfs(vfs, zero, sizeof(zero), 1) != 1) {
+            return ERROR_CODE;
+        }
+    }
+
+    return NO_ERROR_CODE;
+}
+
+
+int zero_indirect_blocks(VFS **vfs, int32_t indirect1, int32_t indirect2) {
+    static char zero[CLUSTER_SIZE] = {0};
+
+    if (indirect1 != ID_ITEM_FREE) {
+        if (seek_data_cluster(vfs, indirect1) == ERROR_CODE ||
+            write_vfs(vfs, zero, sizeof(zero), 1) != 1) {
+            return ERROR_CODE;
+        }
+    }
+
+    if (indirect2 != ID_ITEM_FREE) {
+        if (seek_data_cluster(vfs, indirect2) == ERROR_CODE ||
+            write_vfs(vfs, zero, sizeof(zero), 1) != 1) {
+            return ERROR_CODE;
+        }
+    }
+
+    return NO_ERROR_CODE;
+}
+
+
+void remove_and_free_dir_entry(directory *parent, const char *name) {
+    dir_item *detached = remove_diritem(&parent->file, name);
+    if (detached) {
+        detached->next = NULL;
+        free(detached);
+    }
+}
+
+
+int handle_hardlink_removal(VFS **vfs, directory *parent, dir_item *item, inode *nd) {
+    int inode_id = item->inode;
+
+    nd->references--;
+    write_inode_to_vfs(vfs, inode_id);
+
+    update_sizes_in_file(vfs, parent, -(nd->file_size));
+
+    if (update_directory_in_file(vfs, parent, item, false) == ERROR_CODE) {
+        nd->references++;
+        write_inode_to_vfs(vfs, inode_id);
+        update_sizes_in_file(vfs, parent, nd->file_size);
+        return ERROR_CODE;
+    }
+
+    remove_and_free_dir_entry(parent, item->item_name);
+
+    return NO_ERROR_CODE;
+}
+
+
+int handle_full_file_removal(VFS **vfs, directory *parent,dir_item *item, inode *nd) {
+    int block_count = 0, rest = 0;
+    int32_t *blocks = NULL;
+    int result = ERROR_CODE;
+
+    blocks = get_data_blocks(vfs, item->inode, &block_count, &rest);
+    if (!blocks) {
+        printf("ERROR: Failed to retrieve data blocks\n");
+        goto cleanup;
+    }
+
+    if (zero_data_blocks(vfs, blocks, block_count) == ERROR_CODE) {
+        printf("ERROR: Failed to zero data blocks\n");
+        goto cleanup;
+    }
+
+    if (zero_indirect_blocks(vfs, nd->indirect1, nd->indirect2) == ERROR_CODE) {
+        printf("ERROR: Failed to zero indirect blocks\n");
+        goto cleanup;
+    }
+
+    flush_vfs(vfs);
+
+    update_bitmap_in_file(vfs, item, 0, blocks, block_count);
+
+    update_sizes_in_file(vfs, parent, -(nd->file_size));
+
+    if (update_directory_in_file(vfs, parent, item, false) == ERROR_CODE) {
+        printf("ERROR: Failed to update directory on disk\n");
+        goto cleanup;
+    }
+
+    reset_inode(nd);
+    write_inode_to_vfs(vfs, item->inode);
+
+    remove_and_free_dir_entry(parent, item->item_name);
+
+    result = NO_ERROR_CODE;
+
+    cleanup:
+    free(blocks);
+    return result;
 }

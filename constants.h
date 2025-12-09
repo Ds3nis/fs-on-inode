@@ -56,6 +56,7 @@
 #define DIR_NOT_EMPTY_MSG       "NOT EMPTY (directory contains subdirectories or files)\n"
 #define NOT_ENOUGH_BLOCKS_MSG "Not enough blocks found. Probably no more space available. \n"
 #define START_NEEDS_FORMAT_MSG "VFS File not found, needs formatting.\n"
+#define RM_DIRECTORY_MSG "%s is a directory. Use 'rmdir' instead.\n"
 #define MEMORY_ERROR_MSG "Cannot allocate memory.\n"
 #define UNKNOWN_COMMAND_MSG "Unknown command: '%s'. Type 'help' for list of commands.\n"
 #define VFS_NOT_INITIALIZED_MSG "Error: Virtual filesystem not initialized. Use 'format' first.\n"
@@ -70,6 +71,9 @@
 #define VFS_ERROR "Error loading virtual filesystem: %s\n"
 #define VFS_LOAD_SUCCESS "VFS successfully initialized.\n"
 #define NAME_TOO_LONG "Error: Name too long (max %d characters)\n"
+#define CIRCULAR_ERROR "CANNOT MOVE DIRECTORY INTO ITSELF\n"
+#define REMOVE_FAILED "Failed to remove from source directory\n"
+#define MOVE_FILE_FAILED "Critical error file moved but not synced to disk\n"
 
 
 #define OK_MSG "OK \n"

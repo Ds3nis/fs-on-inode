@@ -122,7 +122,7 @@ typedef struct vfs {
  *   - help text shown in 'help' command
  */
 typedef struct Command {
-    const char *name;
+    char *name;
     bool requires_format;
     int expected_args;
     const char **arg_error_msgs;
