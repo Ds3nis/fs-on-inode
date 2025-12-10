@@ -457,175 +457,236 @@ void cmd_info(VFS **vfs, char **args) {
 }
 
 
-// void cmd_incp(VFS **vfs, char **args) {
-//     int32_t *blocks, inode_id;
-//     int i, block_count, real_block_count, tmp, last_block_index;
-//     char *name;
-//     directory *dir;
-//     dir_item **new_dir_item;
-//     char *filepath_dest = args[1];
-//     char *filepath_src = args[0];
-//
-//     /* Find destination directory */
-//     if (parse_path(vfs, filepath_dest, &name, &dir) == -1) {
-//         printf(FILE_NOT_FOUND_MSG);
-//         return;
-//     }
-//
-//
-//     if (strlen(name) >= MAX_ITEM_NAME_LENGTH) {
-//         printf(FILENAME_TOO_LONG_MSG);
-//     }
-//
-//     check_if_exists(dir, name);
-//
-//     if (strlen(name) == 0) {
-//         name = strrchr(filepath_src, '/');
-//
-//         if (name == NULL) {
-//             name = filepath_src;
-//         } else {
-//             name++; /* Skip the slash */
-//         }
-//     }
-//
-//     FILE *src_file = fopen(filepath_src, "rb");
-//     if (src_file == NULL){
-//         FILE_NOT_FOUND_MSG;
-//     }
-//
-//     /* Get size of the copied file */
-//     int fd = fileno(src_file);
-//     struct stat buf;
-//     fstat(fd, &buf);
-//     int32_t file_size = buf.st_size;
-//
-//     block_count = file_size / CLUSTER_SIZE;
-//
-//     if (file_size % CLUSTER_SIZE != 0) block_count++;
-//
-//     real_block_count = get_block_count_with_indirect(block_count);
-//
-//     blocks = find_free_data_blocks(vfs, real_block_count);
-//     if (blocks  == NULL) {
-//         printf(NOT_ENOUGH_BLOCKS_MSG);
-//     }
-//
-//     /* Get ID of a free i-node */
-//     inode_id = vfs_find_free_inode(vfs);
-//
-//
-//     if (inode_id == ERROR_CODE) {
-//         printf(NO_FREE_INODE_MSG);
-//         fclose(src_file);
-//         return;
-//     }
-//
-//     new_dir_item = &(dir->file);
-//     while (*new_dir_item != NULL) {        /* Loop to the end of the list */
-//         new_dir_item = &((*new_dir_item)->next);
-//     }
-//
-//     *new_dir_item = create_directory_item(inode_id, name);
-//
-//     /* Initialize i-node */
-//     last_block_index = initialize_inode(vfs, inode_id, file_size, block_count, blocks);
-//
-//     update_bitmap_in_file(vfs, *new_dir_item, 1, blocks, block_count);
-//     write_inode_to_vfs(vfs, inode_id);
-//     update_directory_in_file(vfs, dir, *new_dir_item, true); /* TODO */
-//     update_sizes_in_file(vfs, dir, file_size);
-//
-//
-//     /* Initialize buffer */
-//     char buffer[CLUSTER_SIZE];
-//     memset(buffer, 0, CLUSTER_SIZE);
-//
-//
-//     /* Read block, seek in VFS and write into VFS */
-//     for (i = 0; i < block_count - 1; i++) {
-//         fread(buffer, sizeof(buffer), 1, src_file);
-//         seek_data_cluster(vfs, blocks[i]);
-//         write_vfs(vfs, buffer, sizeof(buffer), 1);
-//     }
-//
-//     /* Read last block */
-//     tmp = get_last_block_size(file_size % CLUSTER_SIZE);
-//
-//     /* TODO CHANGE EVERYWHERE TO PART BUFFER */
-//     char part_buffer[tmp];
-//
-//     fread(buffer, sizeof(part_buffer), 1, src_file);
-//     seek_data_cluster(vfs, blocks[last_block_index]);
-//     write_vfs(vfs, part_buffer, sizeof(part_buffer), 1);
-//
-//     flush_vfs(vfs);
-//
-//     /* Cleanup */
-//     fclose(src_file);
-//     free(blocks);
-//
-//     printf(OK_MSG);
-// }
-//
-//
-// void cmd_outcp(VFS **vfs, char **args) {
-//     int i, block_count, rest, last_block_size;
-//     int32_t *blocks;
-//     char *name;
-//     char buffer[CLUSTER_SIZE];
-//     directory *dir;
-//     dir_item *item;
-//     FILE *f;
-//
-//     char *filepath_dest = args[1];
-//     char *filepath_src = args[0];
-//
-//     /* Parse source path */
-//     if(parse_path(vfs, filepath_src, &name, &dir) == ERROR_CODE) {
-//         printf(FILE_NOT_FOUND_MSG);
-//         return;
-//     }
-//
-//     /* Find item */
-//     item = find_diritem(dir->file, name);
-//     if (item == NULL) {
-//         printf(FILE_NOT_FOUND_MSG);
-//         return;
-//     }
-//
-//     /* Open output file */
-//     f = fopen(filepath_dest, "wb");
-//     if (f == NULL) {
-//         printf(FILE_NOT_FOUND_MSG);
-//         return;
-//     }
-//
-//     blocks = get_data_blocks(vfs, item->inode, &block_count, &rest);
-//
-//     /* Copy data blocks */
-//     for (i = 0; i < block_count - 1; i++) {
-//         seek_data_cluster(vfs, blocks[i]);
-//         vfs_read(vfs, buffer, sizeof(buffer), 1);
-//         fwrite(buffer, sizeof(buffer), 1, f);
-//         fflush(f);
-//     }
-//
-//     /* Copy last block */
-//     last_block_size = get_last_block_size(rest);
-//     char part_buffer[last_block_size];
-//
-//     seek_data_cluster(vfs, blocks[block_count - 1]);
-//     vfs_read(vfs, part_buffer, sizeof(part_buffer), 1);
-//     fwrite(part_buffer, sizeof(part_buffer), 1, f);
-//
-//     fflush(f);
-//     flush_vfs(vfs);
-//     fclose(f);
-//     free(blocks);
-//
-//     printf(OK_MSG);
-// }
+void cmd_incp(VFS **vfs, char **args) {
+    char *name = NULL;
+    directory *dir = NULL;
+    dir_item *new_item = NULL;
+    FILE *src_file = NULL;
+    int32_t *blocks = NULL;
+    int32_t inode_id = ERROR_CODE;
+    int32_t file_size = 0;
+    int block_count = 0;
+    int real_block_count = 0;
+
+    char *real_path = args[0];
+    char *vfs_path = args[1];
+
+    if (parse_path(vfs, vfs_path, &name, &dir) == ERROR_CODE) {
+        printf(FILE_NOT_FOUND_MSG);
+        return;
+    }
+
+    if (!dir) {
+        printf(PATH_NOT_FOUND_MSG);
+        return;
+    }
+
+    if (str_empty(name)) {
+        name = extract_filename_from_path(real_path);
+    }
+
+    if (str_empty(name)) {
+        printf("ERROR: Cannot determine filename\n");
+        return;
+    }
+
+    if (!validate_new_item_name(name)) {
+        printf(FILENAME_TOO_LONG_MSG);
+        return;
+    }
+
+    if (check_if_exists(dir, name)) {
+        printf(FILE_EXISTS_MSG);
+        return;
+    }
+
+
+    src_file = fopen(real_path, "rb");
+    if (!src_file) {
+        perror(OPEN_FILE_ERR_MSG);
+        return;
+    }
+
+
+    if (get_file_size(src_file, &file_size) == ERROR_CODE) {
+        printf("ERROR: Cannot determine file size\n");
+        fclose(src_file);
+        return;
+    }
+
+    if (file_size == 0) {
+        printf("WARNING: Source file is empty (0 bytes)\n");
+    }
+
+    block_count = (file_size + CLUSTER_SIZE - 1) / CLUSTER_SIZE;
+    real_block_count = calculate_required_clusters(block_count);
+
+    blocks = find_free_data_blocks(vfs, real_block_count);
+    if (!blocks) {
+        printf(NOT_ENOUGH_BLOCKS_MSG);
+        fclose(src_file);
+        return;
+    }
+
+    inode_id = vfs_find_free_inode(vfs);
+    if (inode_id == ERROR_CODE) {
+        printf(NO_FREE_INODE_MSG);
+        goto cleanup;
+    }
+
+    new_item = create_directory_item(inode_id, name);
+    if (!new_item) {
+        printf("ERROR: Failed to create directory item\n");
+        goto cleanup;
+    }
+
+    add_item_to_list(&dir->file, new_item);
+
+
+    int last_block_index = initialize_inode(vfs, inode_id, file_size,
+                                           block_count, blocks);
+    if (last_block_index < 0) {
+        printf("ERROR: Failed to initialize inode\n");
+        goto cleanup_rollback;
+    }
+
+
+    // Копіюємо повні блоки
+    for (int i = 0; i < block_count - 1; i++) {
+        if (copy_block_to_vfs(src_file, vfs, blocks[i],
+                             CLUSTER_SIZE) == ERROR_CODE) {
+            printf("ERROR: Failed to copy block %d/%d\n", i + 1, block_count);
+            goto cleanup_rollback;
+        }
+    }
+
+    if (block_count > 0) {
+        size_t last_size = calculate_last_block_size(file_size);
+        if (copy_block_to_vfs(src_file, vfs, blocks[last_block_index],
+                             last_size) == ERROR_CODE) {
+            printf("ERROR: Failed to copy last block\n");
+            goto cleanup_rollback;
+        }
+    }
+
+    flush_vfs(vfs);
+
+    update_bitmap_in_file(vfs, new_item, 1, blocks,block_count);
+
+    write_inode_to_vfs(vfs, inode_id);
+
+    if (update_directory_in_file(vfs, dir, new_item, true) == ERROR_CODE) {
+        printf("ERROR: Failed to update directory\n");
+        goto cleanup_rollback;
+    }
+
+    update_sizes_in_file(vfs, dir, file_size);
+
+
+    printf("OK: Imported %d bytes from '%s' to '%s'\n",
+           file_size, real_path, vfs_path);
+
+    goto cleanup;
+
+cleanup_rollback:
+    rollback_import(vfs, dir, new_item, blocks, block_count, inode_id);
+    printf("ERROR: Import failed, changes rolled back\n");
+
+cleanup:
+    if (src_file) fclose(src_file);
+    free(blocks);
+}
+
+
+void cmd_outcp(VFS **vfs, char **args) {
+    char *name = NULL;
+    directory *dir = NULL;
+    dir_item *item = NULL;
+    FILE *output_file = NULL;
+    int32_t *blocks = NULL;
+    int block_count = 0, rest = 0;
+    int result = ERROR_CODE;
+
+    char *vfs_path = args[0];
+    char *real_path = args[1];
+
+    if (parse_path(vfs, vfs_path, &name, &dir) == ERROR_CODE) {
+        printf(FILE_NOT_FOUND_MSG);
+        return;
+    }
+
+    item = find_directory_by_name(dir->file, name);
+    if (!item) {
+        printf(FILE_NOT_FOUND_MSG);
+        return;
+    }
+
+    inode *nd = &(*vfs)->inodes[item->inode];
+    if (nd->isDirectory) {
+        printf("ERROR: '%s' is a directory. Cannot export directories.\n", name);
+        return;
+    }
+
+    if (nd->file_size == 0) {
+        printf("WARNING: '%s' is empty (0 bytes)\n", name);
+    }
+
+    if (file_exists(real_path)) {
+        printf("WARNING: '%s' already exists and will be overwritten.\n", real_path);
+    }
+
+    output_file = fopen(real_path, "wb");
+    if (!output_file) {
+        perror("ERROR: Failed to create output file");
+        return;
+    }
+
+    blocks = get_data_blocks(vfs, item->inode, &block_count, &rest);
+    if (!blocks) {
+        printf("ERROR: Failed to read file blocks\n");
+        goto cleanup;
+    }
+
+    if (block_count == 0) {
+        printf("WARNING: File has no data blocks\n");
+        result = NO_ERROR_CODE;
+        goto cleanup;
+    }
+
+    // 8. Копіювання повних блоків
+    for (int i = 0; i < block_count - 1; i++) {
+        if (copy_full_block(vfs, output_file, blocks[i]) == ERROR_CODE) {
+            printf("ERROR: Failed to copy block %d/%d\n", i + 1, block_count);
+            goto cleanup;
+        }
+    }
+
+    // 9. Копіювання останнього блоку (може бути неповним)
+    size_t last_block_size = calculate_last_block_size(nd->file_size);
+    if (copy_partial_block(vfs, output_file, blocks[block_count - 1],
+                          last_block_size) == ERROR_CODE) {
+        printf("ERROR: Failed to copy last block\n");
+        goto cleanup;
+    }
+
+    result = NO_ERROR_CODE;
+    printf("OK: Exported %d bytes from '%s' to '%s'\n",
+           nd->file_size, vfs_path, real_path);
+
+cleanup:
+    if (output_file) {
+        fflush(output_file);
+        fclose(output_file);
+
+        if (result == ERROR_CODE) {
+            remove(real_path);
+            printf("ERROR: Export failed, partial file removed\n");
+        }
+    }
+
+    free(blocks);
+    flush_vfs(vfs);
+}
 
 /*
  * Prints general statistics about the virtual filesystem.
@@ -811,7 +872,7 @@ void cmd_cp(VFS **vfs, char **args){
         return;
     }
 
-    real_block_count = get_block_count_with_indirect(block_count);
+    real_block_count = calculate_required_clusters(block_count);
     dest_blocks = find_free_data_blocks(vfs, real_block_count);
     if (!dest_blocks) {
         printf(NOT_ENOUGH_BLOCKS_MSG);
@@ -946,6 +1007,20 @@ void cmd_mv(VFS **vfs, char **args) {
     printf(OK_MSG);
 }
 
+/*
+ * Removes a file from the virtual filesystem.
+ *  - Resolves the full path to identify the parent directory and filename
+ *  - Ensures the file exists and is not a directory
+ *  - If inode has multiple hardlinks, only the directory entry is removed
+ *  - If inode is referenced once, the whole file is deleted:
+ *      • data blocks are zeroed
+ *      • indirect blocks are cleared
+ *      • bitmap updated
+ *      • inode freed
+ *  - Directory entry is removed from the in-memory list and from the VFS file
+ *
+ * Uses two removal strategies: 'handle_hardlink_removal' and 'handle_full_file_removal'.
+ */
 void cmd_rm(VFS **vfs, char **args) {
     char *name = NULL;
     directory *parent = NULL;

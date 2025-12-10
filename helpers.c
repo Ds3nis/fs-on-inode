@@ -849,6 +849,15 @@ void safe_copy_name(char *dest, const char *src, size_t max_len) {
     dest[max_len - 1] = '\0';
 }
 
+/*
+ * Overwrites all data clusters of a file with zero bytes.
+ * For each referenced data block:
+ *   - seeks to the cluster
+ *   - writes CLUSTER_SIZE bytes of zero
+ *
+ * Used when the last hardlink to a file is removed.
+ * Does not modify the bitmap; the caller must handle it.
+ */
 static int zero_data_blocks(VFS **vfs, int32_t *blocks, int block_count) {
     static char zero[CLUSTER_SIZE] = {0};
 
@@ -867,6 +876,13 @@ static int zero_data_blocks(VFS **vfs, int32_t *blocks, int block_count) {
 }
 
 
+/*
+ * Clears content of indirect block tables (indirect1 and indirect2),
+ * effectively removing references to secondary and tertiary data blocks.
+ *
+ * Does NOT clear the referenced blocks themselves — only the pointer tables.
+ * The caller is responsible for clearing actual file data blocks.
+ */
 int zero_indirect_blocks(VFS **vfs, int32_t indirect1, int32_t indirect2) {
     static char zero[CLUSTER_SIZE] = {0};
 
@@ -887,7 +903,12 @@ int zero_indirect_blocks(VFS **vfs, int32_t indirect1, int32_t indirect2) {
     return NO_ERROR_CODE;
 }
 
-
+/*
+ * Removes a dir_item from a directory list in memory and frees the allocated memory.
+ * This handles only the in-memory structure, not the VFS file metadata.
+ *
+ * A tiny but crucial helper for rm, mv, and rmdir.
+ */
 void remove_and_free_dir_entry(directory *parent, const char *name) {
     dir_item *detached = remove_diritem(&parent->file, name);
     if (detached) {
@@ -896,7 +917,16 @@ void remove_and_free_dir_entry(directory *parent, const char *name) {
     }
 }
 
-
+/*
+ * Handles the case when a file has more than one reference (hardlinks).
+ * In this scenario:
+ *   - Only the directory entry is removed
+ *   - The inode's reference count is decremented
+ *   - Parent directory size is updated
+ *   - VFS is synced (directory table, inode)
+ *
+ * Ensures rollback if any disk operation fails.
+ */
 int handle_hardlink_removal(VFS **vfs, directory *parent, dir_item *item, inode *nd) {
     int inode_id = item->inode;
 
@@ -918,6 +948,18 @@ int handle_hardlink_removal(VFS **vfs, directory *parent, dir_item *item, inode 
 }
 
 
+/*
+ * Removes a file completely (last reference):
+ *   - Retrieves all its data blocks (direct & indirect)
+ *   - Zeroes their content
+ *   - Clears indirect block tables
+ *   - Updates bitmap to free these blocks
+ *   - Updates parent directory sizes
+ *   - Removes directory entry (both in memory and on disk)
+ *   - Resets inode and writes it back
+ *
+ * Performs cleanup and error reporting if any step fails.
+ */
 int handle_full_file_removal(VFS **vfs, directory *parent,dir_item *item, inode *nd) {
     int block_count = 0, rest = 0;
     int32_t *blocks = NULL;
@@ -960,4 +1002,116 @@ int handle_full_file_removal(VFS **vfs, directory *parent,dir_item *item, inode 
     cleanup:
     free(blocks);
     return result;
+}
+
+size_t calculate_last_block_size(int32_t file_size) {
+    int rest = file_size % CLUSTER_SIZE;
+    return (rest != 0) ? rest : CLUSTER_SIZE;
+}
+
+
+int copy_full_block(VFS **vfs, FILE *dest, int32_t block_num) {
+    char buffer[CLUSTER_SIZE];
+
+    if (seek_data_cluster(vfs, block_num) == ERROR_CODE) {
+        return ERROR_CODE;
+    }
+
+    if (vfs_read(vfs, buffer, sizeof(buffer), 1) != 1) {
+        return ERROR_CODE;
+    }
+
+    if (fwrite(buffer, sizeof(buffer), 1, dest) != 1) {
+        return ERROR_CODE;
+    }
+
+    return NO_ERROR_CODE;
+}
+
+
+int copy_partial_block(VFS **vfs, FILE *dest, int32_t block_num, size_t size) {
+    static char buffer[CLUSTER_SIZE];
+
+    if (size > CLUSTER_SIZE) {
+        size = CLUSTER_SIZE;
+    }
+
+    if (seek_data_cluster(vfs, block_num) == ERROR_CODE) {
+        return ERROR_CODE;
+    }
+
+    if (vfs_read(vfs, buffer, size, 1) != 1) {
+        return ERROR_CODE;
+    }
+
+    if (fwrite(buffer, size, 1, dest) != 1) {
+        return ERROR_CODE;
+    }
+
+    return NO_ERROR_CODE;
+}
+
+char* extract_filename_from_path(const char *path) {
+    char *name = strrchr(path, '/');
+
+    if (name == NULL) {
+        return (char *)path;
+    } else {
+        return name + 1;
+    }
+}
+
+int get_file_size(FILE *file, int32_t *size_out) {
+    int fd = fileno(file);
+    if (fd == -1) {
+        return ERROR_CODE;
+    }
+
+    struct stat buf;
+    if (fstat(fd, &buf) == -1) {
+        return ERROR_CODE;
+    }
+
+    *size_out = buf.st_size;
+    return NO_ERROR_CODE;
+}
+
+int copy_block_to_vfs(FILE *src, VFS **vfs, int32_t block_num, size_t size) {
+    static char buffer[CLUSTER_SIZE];
+
+    if (size > CLUSTER_SIZE) {
+        size = CLUSTER_SIZE;
+    }
+
+    if (fread(buffer, size, 1, src) != 1) {
+        if (!feof(src)) {
+            return ERROR_CODE;
+        }
+    }
+
+    if (seek_data_cluster(vfs, block_num) == ERROR_CODE) {
+        return ERROR_CODE;
+    }
+
+    if (write_vfs(vfs, buffer, size, 1) != 1) {
+        return ERROR_CODE;
+    }
+
+    return NO_ERROR_CODE;
+}
+
+void rollback_import(VFS **vfs, directory *dir, dir_item *item,int32_t *blocks, int block_count, int inode_id) {
+    if (item) {
+        remove_diritem(&dir->file, item->item_name);
+        update_directory_in_file(vfs, dir, item, false);
+    }
+
+    if (blocks) {
+        update_bitmap_in_file(vfs, item, 0, blocks, block_count);
+    }
+
+    if (inode_id != ERROR_CODE) {
+        reset_inode(&(*vfs)->inodes[inode_id]);
+        write_inode_to_vfs(vfs, inode_id);
+    }
 }

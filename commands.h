@@ -110,7 +110,9 @@ void cmd_cp(VFS **vfs, char **args);
  */
 void cmd_mv(VFS **vfs, char **args);
 
-
+/*
+ * Removes a file from the virtual filesystem.
+ */
 void cmd_rm(VFS **vfs, char **args);
 
 /*
