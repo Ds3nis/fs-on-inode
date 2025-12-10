@@ -18,6 +18,7 @@ static const char *ERR_SRC_DEST[] = {DEST_NOT_DEFINED_MSG};
 static const char *ERR_FILE_NAME[] = {FILE_OR_DIRECTORY_NOT_DEFINED};
 static const char *ERR_SRC_DEST_ARGS[] = {SRC_NOT_DEFINED_MSG,DEST_NOT_DEFINED_MSG};
 static const char *ERR_FILE_NOT_FOUND[] = {FILE_NOT_FOUND_MSG};
+static const char *ERR_SRC_NAME_ARGS[] = {SRC_NOT_DEFINED_MSG, HARDLINK_NO_NAME_MSG};
 
 // Maximum allowed nested load depth to prevent infinite recursion
 static int load_depth = 0;
@@ -25,12 +26,12 @@ static int load_depth = 0;
 /* Command table: maps command name to handler, arg count, and help message */
 Command commands[] = {
     {HELP_COMMAND,  false, 0, NULL, cmd_help,  "help --  Show available commands \n"},
-    {FORMAT_COMMAND,false, 1, ERR_FS_SIZE, cmd_format_vfs,"format 600M  --  Formats the virtual file system (VFS)\n"},
+    {FORMAT_COMMAND,false, 1, ERR_FS_SIZE, cmd_format_vfs,"format 125000  --  Formats the virtual file system (VFS)\n"},
     {MKDIR_COMMAND, true,  1, ERR_DIRNAME,  cmd_mkdir, "mkdir a1  --  Creates new directory a1\n"},
     {LS_COMMAND, true, 0, NULL, cmd_ls, "ls a1  --  Lists the contents of the directory a1\n"},
     {RMDIR_COMMAND, true, 1, ERR_DIRNAME, cmd_rmdir, "rmdir a1  --  Deletes the directory a1\n"},
     {PWD_COMMAND, true, 0, NULL, cmd_pwd, "pwd  --  Lists the path to the current folder\n"},
-    {CD_COMMAND, true, 1, ERR_SRC_DEST, cmd_cd, "cd a1  --  Changes the current folder to the directory at address a1\n"},
+    {CD_COMMAND, true, 0, ERR_SRC_DEST, cmd_cd, "cd a1  --  Changes the current folder to the directory at address a1\n"},
     {INFO_COMMAND, true, 1, ERR_FILE_NAME, cmd_info, "info a1/s1  --  Lists information about the given file/folder\n"},
     {INCP_COMMAND, true, 2, ERR_SRC_DEST_ARGS, cmd_incp, "incp s1 s2  --  Moves a file from the real file system to the virtual one\n"},
     {OUTCP_COMMAND, true, 2, ERR_SRC_DEST_ARGS, cmd_outcp, "outcp s1 s2  --  Moves a file from the virtual file system to the real one\n"},
@@ -38,8 +39,9 @@ Command commands[] = {
     {LOAD_COMMAND, false, 1, ERR_FILE_NOT_FOUND, cmd_load, "load s1  --  Reads commands line by line from file s1 from the real file system\n"},
     {CAT_COMMAND, true, 1, ERR_FILE_NOT_FOUND, cmd_cat, "cat s1  --  Lists the contents of the file s1\n"},
     {CP_COMMAND, true, 2, ERR_SRC_DEST_ARGS, cmd_cp, "cp s1 s2  --  Copies the file from path s1 to path s2\n"},
-    {MV_COMMAND, true, 2, ERR_SRC_DEST_ARGS, cmd_mv, "mv s1 s2  --  Přesune soubor na cestě s1 na cestu s2\n"},
-    {RM_COMMAND, true, 1, ERR_FILE_NOT_FOUND, cmd_rm, "rm s1  --  Odstraní soubor s1\n"},
+    {MV_COMMAND, true, 2, ERR_SRC_DEST_ARGS, cmd_mv, "mv s1 s2  --  Move the file from path s1 to path s2\n"},
+    {RM_COMMAND, true, 1, ERR_FILE_NOT_FOUND, cmd_rm, "rm s1  --  Delete the file s1\n"},
+    {LN_COMMAND, true, 2, ERR_SRC_NAME_ARGS, cmd_ln, "ln s1 s2  --  Creates a hard link to file s1 named s2\n"},
     {EXIT_COMMAND, false, 0, NULL, cmd_exit, "exit -- Exit filesystem \n"}
 };
 
@@ -50,13 +52,20 @@ const int command_count = sizeof(commands) / sizeof(Command);
 /*
  * Validates argument count and executes command handler.
  */
-bool validate_and_execute_command(VFS **vfs, Command *cmd, char *input) {
+bool validate_and_execute_command(VFS **vfs, Command *cmd) {
     if (cmd->requires_format && (!vfs || !*vfs || !(*vfs)->is_formatted)) {
         printf(VFS_NOT_INITIALIZED_MSG);
         return false;
     }
 
     char *args[10] = {0};
+    if (cmd->expected_args == 0) {
+        // read optional argument (like cd a1 or ls folder)
+        args[0] = strtok(NULL, " ");
+        cmd->handler(vfs, args);
+        return false;
+    }
+
     for (int i = 0; i < cmd->expected_args; i++) {
         args[i] = strtok(NULL, " ");
         if (str_empty(args[i])) {
@@ -87,7 +96,7 @@ int process_command_line(VFS **vfs, char *input) {
         if (streq(command_name, commands[i].name)) {
             bool should_exit = false;
             if (strcmp(command_name, "exit") == 0) should_exit = true;
-            bool result = validate_and_execute_command(vfs, &commands[i], input);
+            bool result = validate_and_execute_command(vfs, &commands[i]);
             return should_exit ? 1 : result;
         }
     }
@@ -203,14 +212,6 @@ void cmd_mkdir(VFS **vfs, char **args) {
 
     init_directory_inode(&(*vfs)->inodes[inode_id], inode_id, data_block);
 
-
-    // Allocate a free inode for the new directory
-    int free_inode = vfs_find_free_inode(vfs);
-    if (free_inode == -1) {
-        printf(NO_FREE_INODE);
-        return;
-    }
-
     // Create directory structures in memory
     directory *new_dir = NULL;
     dir_item *new_item = NULL;
@@ -219,10 +220,9 @@ void cmd_mkdir(VFS **vfs, char **args) {
         return;
     }
 
-    // Link directory item at end of subdir list
     add_item_to_list(&dir->subdir, new_item);
     (*vfs)->data_bitmap[data_block] = 1;
-    if (sync_to_disk(vfs, dir, new_item, inode_id, &data_block, true) == false) {
+    if (sync_to_disk(vfs, dir, new_item, inode_id, &data_block, true, 1) == false) {
         return;
     }
 
@@ -326,9 +326,8 @@ void cmd_rmdir(VFS **vfs, char **args) {
         return;
     }
 
-    reset_inode(target_inode);
     // Save directory removal + bitmap update + inode write
-    if (!sync_to_disk(vfs, parent, dir_item_to_remove, dir_item_to_remove->inode ,0,false)) {
+    if (!sync_to_disk(vfs, parent, dir_item_to_remove, dir_item_to_remove->inode ,NULL,false, 0)) {
         printf("Write error.\n");
         return;
     }
@@ -343,6 +342,7 @@ void cmd_rmdir(VFS **vfs, char **args) {
     }
     free(detached);
     printf(OK_MSG);
+    check_sb_info(vfs);
 }
 
 
@@ -399,7 +399,12 @@ void cmd_pwd(VFS **vfs, char **args) {
  */
 void cmd_cd(VFS **vfs, char **args) {
     char *path = args[0];
-    directory *dir = find_directory(vfs, path);
+    directory *dir = NULL;
+    if (!path || str_empty(path)) {
+        dir = (*vfs)->all_dirs[0];
+    }else {
+        dir = find_directory(vfs, path);
+    }
     if (dir == NULL) {
         printf(PATH_NOT_FOUND_MSG);
         return;
@@ -470,7 +475,7 @@ void cmd_incp(VFS **vfs, char **args) {
 
     char *real_path = args[0];
     char *vfs_path = args[1];
-
+    printf("%s", vfs_path);
     if (parse_path(vfs, vfs_path, &name, &dir) == ERROR_CODE) {
         printf(FILE_NOT_FOUND_MSG);
         return;
@@ -484,14 +489,13 @@ void cmd_incp(VFS **vfs, char **args) {
     if (str_empty(name)) {
         name = extract_filename_from_path(real_path);
     }
-
+    printf("%s\n", name);
     if (str_empty(name)) {
         printf("ERROR: Cannot determine filename\n");
         return;
     }
 
     if (!validate_new_item_name(name)) {
-        printf(FILENAME_TOO_LONG_MSG);
         return;
     }
 
@@ -1061,6 +1065,60 @@ void cmd_rm(VFS **vfs, char **args) {
         printf("ERROR: Failed to remove file\n");
     }
 }
+
+
+/*
+ * Creates a hard link to an existing file within the virtual filesystem
+ */
+void cmd_ln(VFS **vfs, char **args) {
+    char *src_name = NULL;
+    directory *src_dir = NULL;
+
+    char *src_path = args[0];
+    char *dest_path = args[1];
+
+    if (parse_path(vfs, src_path, &src_name, &src_dir) == ERROR_CODE || !src_dir) {
+        printf(FILE_NOT_FOUND_MSG);
+        return;
+    }
+
+    dir_item *src_item = find_directory_by_name(src_dir->file, src_name);
+    if (!src_item) {
+        printf(FILE_NOT_FOUND_MSG);
+        return;
+    }
+
+    inode *src_inode = &(*vfs)->inodes[src_item->inode];
+    if (src_inode->isDirectory) {
+        //printf("[DEBUG]: Cannot create hardlink to directory.\n");
+        return;
+    }
+
+    char *dest_name = NULL;
+    directory *dest_dir = NULL;
+
+    if (parse_path(vfs, dest_path, &dest_name, &dest_dir) == ERROR_CODE || !dest_dir) {
+        printf(PATH_NOT_FOUND_MSG);
+        return;
+    }
+
+    if (check_if_exists(dest_dir, dest_name)) {
+        printf(FILE_EXISTS_MSG);
+        return;
+    }
+
+    dir_item *new_item = create_directory_item(src_item->inode, dest_name);
+    add_item_to_list(&dest_dir->file, new_item);
+
+    src_inode->references++;
+    write_inode_to_vfs(vfs, src_inode->nodeid);
+
+    update_directory_in_file(vfs, dest_dir, new_item, true);
+
+    printf(OK_MSG);
+    //printf("[DEBUG]: created hardlink '%s' -> inode %d (refs=%d)\n", dest_name, src_item->inode, src_inode->references);
+}
+
 
 /*
  * Exit program

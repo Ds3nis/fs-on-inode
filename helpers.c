@@ -12,7 +12,7 @@
 /*
  * Returns if string str1 equals str2
  */
-bool streq(char *str1, char *str2) {
+bool streq(const char *str1, const char *str2) {
     if (strcmp(str1, str2) == 0) {
         return true;
     } else {
@@ -250,10 +250,6 @@ int parse_path(VFS **vfs, char *path, char **name, directory **dir) {
  * NULL is returned to indicate an invalid path.
  */
 directory *find_directory(VFS **vfs, char *path) {
-    if (str_empty(path)) {
-        return NULL;
-    }
-
     directory *current;
 
     // Start from root for absolute path
@@ -506,13 +502,13 @@ void print_indirect_block(VFS **vfs, int32_t block) {
 
 int calculate_required_clusters(int data_blocks) {
     if (data_blocks <= 5) {
-        return data_blocks;  // Тільки direct
+        return data_blocks;
     }
     else if (data_blocks <= (CLUSTER_SIZE / 4) + 5) {
-        return data_blocks + 1;  // + indirect1
+        return data_blocks + 1;
     }
     else {
-        return data_blocks + 2;  // + indirect1 + indirect2
+        return data_blocks + 2;
     }
 }
 
@@ -594,7 +590,7 @@ void init_directory_inode(inode *node, int id, int32_t block) {
     node->file_size = 0;
     node->references = 1;
     node->direct1 = block;
-    node->direct2 = node->direct3 = node->direct4 =
+    node->direct2 = node->direct3 = node->direct4 =ID_ITEM_FREE;
     node->direct5 = node->indirect1 = node->indirect2 = ID_ITEM_FREE;
 }
 
@@ -626,13 +622,19 @@ bool create_directory_structure(VFS **vfs, directory *parent, char *name,
     return true;
 }
 
-bool sync_to_disk(VFS **vfs, directory *parent,dir_item *item, int inode_id,int32_t *block, bool create)
+bool sync_to_disk(VFS **vfs, directory *parent,dir_item *item, int inode_id,int32_t *block, bool create, int8_t value)
 {
     if (update_directory_in_file(vfs, parent, item, create) == ERROR_CODE) {
         return false;
     }
-    update_bitmap_in_file(vfs, item, 1, block, 1);
+
+    update_bitmap_in_file(vfs, item, value, block, 1);
+     if (create == false) {
+        reset_inode(&(*vfs)->inodes[item->inode]);
+    }
+
     write_inode_to_vfs(vfs, inode_id);
+
     flush_vfs(vfs);
     return true;
 }
@@ -1052,7 +1054,7 @@ int copy_partial_block(VFS **vfs, FILE *dest, int32_t block_num, size_t size) {
 }
 
 char* extract_filename_from_path(const char *path) {
-    char *name = strrchr(path, '/');
+    char *name = strrchr(path, '\\');
 
     if (name == NULL) {
         return (char *)path;

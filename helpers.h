@@ -9,7 +9,7 @@
 #include "structures.h"
 
 
-bool streq(char *str1, char *str2);
+bool streq(const char *str1, const char *str2);
 bool str_empty(char *str);
 char * get_line();
 void remove_nl_inplace(char *message);
@@ -25,16 +25,15 @@ void print_directory_content(directory *dir);
 dir_item *find_diritem(dir_item *item,char *name);
 dir_item *remove_diritem(dir_item **head, const char *name);
 void print_dir_item_info(VFS **vfs, dir_item *item);
-int get_block_count_with_indirect(int block_count);
 void update_sizes_in_file(VFS** vfs, directory *dir, int32_t size);
 int get_last_block_size(int rest);
-bool file_exists (char *filename);
+bool file_exists(char *filename);
 void add_item_to_list(dir_item **list_head, dir_item *new_item);
 bool validate_new_item_name(char *name);
 bool allocate_new_inode_and_block(VFS **vfs, int *inode_id, int32_t *block);
 void init_directory_inode(inode *node, int id, int32_t block);
 bool create_directory_structure(VFS **vfs, directory *parent, char *name,int inode_id, directory **out_dir,dir_item **out_item);
-bool sync_to_disk(VFS **vfs, directory *parent,dir_item *item, int inode_id,int32_t *block, bool create);
+bool sync_to_disk(VFS **vfs, directory *parent,dir_item *item, int inode_id,int32_t *block, bool create, int8_t value);
 dir_item *find_directory_by_name(dir_item *dir, char *name);
 void print_indirect_block(VFS **vfs, int32_t block);
 int count_used_blocks(VFS *v);

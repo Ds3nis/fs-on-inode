@@ -16,7 +16,7 @@ extern const int command_count;
 /*
  * Validates argument count and executes command handler.
  */
-bool validate_and_execute_command(VFS **vfs, Command *cmd, char *input);
+bool validate_and_execute_command(VFS **vfs, Command *cmd);
 
 /*
  * Parses input and dispatches correct command.
@@ -114,6 +114,8 @@ void cmd_mv(VFS **vfs, char **args);
  * Removes a file from the virtual filesystem.
  */
 void cmd_rm(VFS **vfs, char **args);
+
+void cmd_ln(VFS **vfs, char **args);
 
 /*
  * Exit program

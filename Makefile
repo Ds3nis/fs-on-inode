@@ -1,19 +1,25 @@
-CC=gcc
-CFLAGS=-Wall -lpthread -lm
+COMPILER       = gcc
+CFLAGS         = -Wall -Wextra -pedantic -std=c17 -g
+LDFLAGS        = -lm
 
-SOURCES=main.c commands.c vfs.c
-OBJECTS=$(SOURCES:.c=.o)
+EXECUTABLE     = vfs
+SOURCES        = main.c vfs.c commands.c helpers.c
+OBJECTS        = $(SOURCES:.c=.o)
 
-all: clean comp
+RUN_ARGUMENT   = myvfs
 
-comp: $(OBJECTS)
-	${CC} $(OBJECTS) -o fs-on-inode $(CFLAGS)
+.PHONY: all run clean valgrind
 
-# Правило для компіляції кожного .c файлу в .o
-%.o: %.c
-	${CC} -c $< -o $@
+all: $(EXECUTABLE)
+
+$(EXECUTABLE): $(OBJECTS)
+	$(COMPILER) $(CFLAGS) $(OBJECTS) -o $@ $(LDFLAGS)
+
+run: $(EXECUTABLE)
+	./$(EXECUTABLE) "$(RUN_ARGUMENT)"
+
+valgrind: $(EXECUTABLE)
+	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes ./$(EXECUTABLE) "$(RUN_ARGUMENT)"
 
 clean:
-	rm -f fs-on-inode
-	rm -f *.o
-	rm -f *.*~
+	rm -f $(EXECUTABLE) $(OBJECTS)

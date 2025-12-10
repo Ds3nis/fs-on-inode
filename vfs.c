@@ -723,6 +723,7 @@ void update_bitmap_in_file(VFS** vfs, dir_item *item, int8_t value, int32_t *dat
         block_count = b_count;
     }
 
+
     // Update direct data blocks
     for (int i = 0; i < block_count; i++) {
         (*vfs)->data_bitmap[blocks[i]] = value;
@@ -759,7 +760,7 @@ int initialize_inode(VFS** vfs, int32_t inode_id, int32_t size, int block_count,
 
     inode *node = &((*vfs)->inodes[inode_id]);
 
-    int block_count_with_indirect = get_block_count_with_indirect(block_count);
+    int block_count_with_indirect = calculate_required_clusters(block_count);
 
     node->nodeid = inode_id;
     node->isDirectory = 0;

@@ -39,6 +39,7 @@
 #define LOAD_COMMAND "load"
 #define SIZE_COMMAND "size"
 #define STATFS_COMMAND "statfs"
+#define LN_COMMAND "ln"
 
 
 #define SRC_NOT_DEFINED_MSG "Source path not defined \n"
@@ -60,6 +61,7 @@
 #define MEMORY_ERROR_MSG "Cannot allocate memory.\n"
 #define UNKNOWN_COMMAND_MSG "Unknown command: '%s'. Type 'help' for list of commands.\n"
 #define VFS_NOT_INITIALIZED_MSG "Error: Virtual filesystem not initialized. Use 'format' first.\n"
+#define HARDLINK_NO_NAME_MSG "Name is not define \n"
 
 
 #define FORMAT_VFS "Do you want to format new filesystem? (y/n): "
@@ -74,6 +76,7 @@
 #define CIRCULAR_ERROR "CANNOT MOVE DIRECTORY INTO ITSELF\n"
 #define REMOVE_FAILED "Failed to remove from source directory\n"
 #define MOVE_FILE_FAILED "Critical error file moved but not synced to disk\n"
+
 
 
 #define OK_MSG "OK \n"
