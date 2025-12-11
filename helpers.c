@@ -1,11 +1,9 @@
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include "helpers.h"
-#include <stdio.h>
 #include <sys/stat.h>
-
-
 #include "vfs.h"
 
 
@@ -33,38 +31,39 @@ bool str_empty(char *str) {
 }
 
 
-char * get_line() {
-    char * line = calloc(1, 100), * linep = line;
-    size_t lenmax = 100, len = lenmax;
-    int c;
+char *get_line() {
+    size_t cap = 128;
+    size_t len = 0;
 
-    if(line == NULL) {
+    char *buf = malloc(cap);
+    if (!buf) return NULL;
+
+    int c;
+    while ((c = fgetc(stdin)) != EOF) {
+
+        if (len + 1 >= cap) {
+            size_t newcap = cap * 2;
+            char *tmp = realloc(buf, newcap);
+            if (!tmp) { free(buf); return NULL; }
+            buf = tmp;
+            cap = newcap;
+        }
+
+        buf[len++] = (char)c;
+
+        if (c == '\n')
+            break;
+    }
+
+    if (len == 0 && feof(stdin)) {
+        free(buf);
         return NULL;
     }
 
-    while(true) {
-        c = fgetc(stdin);
-        if(c == EOF)
-            break;
-
-        if(--len == 0) {
-            len = lenmax;
-            char * linen = realloc(linep, lenmax *= 2);
-
-            if(linen == NULL) {
-                free(linep);
-                return NULL;
-            }
-            line = linen + (line - linep);
-            linep = linen;
-        }
-
-        if((*line++ = c) == '\n')
-            break;
-    }
-    *line = '\0';
-    return linep;
+    buf[len] = '\0';
+    return buf;
 }
+
 
 /*
  * Removes new line characters from string
@@ -90,6 +89,8 @@ superblock *superblock_init(int32_t vfs_size) {
     if (!sb) return NULL;
 
     strncpy(sb->signature, SUPERBLOCK_SIGNATURE, SIGNATURE_LENGTH - 1);
+    sb->signature[SIGNATURE_LENGTH - 1] = '\0';
+
 
     sb->disk_size = vfs_size;
     sb->cluster_size = CLUSTER_SIZE;
@@ -133,8 +134,7 @@ superblock *superblock_init(int32_t vfs_size) {
 
 
 dir_item *create_directory_item(int32_t inode_id, const char *name) {
-    // create dir_item for root (inode 0, name "/")
-    dir_item *dir_item = calloc(1, sizeof(dir_item));
+    dir_item *dir_item = calloc(1, sizeof(struct DIR_ITEM));
     if (!dir_item) {return NULL;}
 
 
@@ -175,7 +175,7 @@ void check_sb_info(VFS **vfs) {
            (*vfs)->superblock->data_start_address);
 
     printf("\nVytvořené Inode :\n");
-    for (unsigned long i = 0 ; i < (*vfs)->superblock->inode_count; i++){
+    for (int32_t i = 0 ; i < (*vfs)->superblock->inode_count; i++){
         if ((*vfs)->inodes[i].nodeid == ID_ITEM_FREE) {
             continue;
         }
@@ -198,35 +198,35 @@ void check_sb_info(VFS **vfs) {
  * Returns NO_ERROR_CODE on success or ERROR_CODE if the path cannot be resolved.
  */
 int parse_path(VFS **vfs, char *path, char **name, directory **dir) {
-    int length;
-    char buff[256];
-
     if (str_empty(path)) {
         return ERROR_CODE;
     }
 
     if (streq(path, "..")) {
-        *name = "";
         *dir = (*vfs)->current_dir->parent;
-    } else if ((*name = strrchr(path, '/')) == NULL) {	/* If there is no slash - Only filename/directory */
-        *name = path;
-        *dir = (*vfs)->current_dir;
+        *name = "";
+        return NO_ERROR_CODE;
     }
-    else  {
-        length = strlen(path) - strlen(*name);
-        if (path[0] == '/') {
-            if (!strstr(path + 1, "/")) { /* If there is only root */
-                length = 1;
-            }
 
+    char *slash = strrchr(path, '/');
+
+    if (slash == NULL) {
+        *dir = (*vfs)->current_dir;
+        *name = path;
+    } else {
+        *name = slash + 1;
+        int len = (int)(slash - path);
+        char buff[256];
+        memset(buff, 0, sizeof(buff));
+        strncpy(buff, path, len);
+        printf("Buffer %s\n", buff);
+        printf("Path %s\n", path);
+        if (path[0] == '/' && len == 0) {
+            strcpy(buff, "/");
         }
-
-        *name = *name + 1;
-        memset(buff, '\0', 256);
-        strncpy(buff, path, length);
-
-        // Find the directory
+        printf("Buffer %s\n", buff);
         *dir = find_directory(vfs, buff);
+        printf("From parse: %s\n", (*dir)->current->item_name);
         if (*dir == NULL) {
             return ERROR_CODE;
         }
@@ -253,6 +253,7 @@ directory *find_directory(VFS **vfs, char *path) {
     directory *current;
 
     // Start from root for absolute path
+    printf("From find: %s\n", path);
     if (path[0] == '/') {
         current = (*vfs)->all_dirs[0];
         path++;  // skip leading '/'
@@ -300,21 +301,6 @@ directory *find_directory(VFS **vfs, char *path) {
 }
 
 
-dir_item *find_item_by_name(dir_item *first, const char *name) {
-    if (first == NULL || name == NULL) {
-        return NULL;
-    }
-
-    dir_item *current = first;
-    while (current != NULL) {
-        if (strncmp(current->item_name, name, MAX_ITEM_NAME_LENGTH) == 0) {
-            return current;
-        }
-        current = current->next;
-    }
-
-    return NULL;
-}
 
 /*
  * Checks whether an item with the given name already exists in the directory.
@@ -394,22 +380,6 @@ void print_directory_content(directory *dir) {
         printf("FILE: %s\n", file->item_name);
         file = file->next;
     }
-}
-
-dir_item *find_diritem(dir_item *item,char *name) {
-    if (item == NULL || name == NULL) {
-        return NULL;
-    }
-
-    dir_item *current = item;
-    while (current != NULL) {
-        if (strncmp(current->item_name, name, MAX_ITEM_NAME_LENGTH) == 0) {
-            return current;
-        }
-        current = current->next;
-    }
-
-    return NULL;
 }
 
 dir_item *remove_diritem(dir_item **head, const char *name) {
@@ -533,13 +503,6 @@ void update_sizes_in_file(VFS** vfs, directory *dir, int32_t size) {
     write_inode_to_vfs(vfs, d->current->inode);
 }
 
-int get_last_block_size(int rest) {
-    if (rest != 0) {
-        return rest;
-    } else {
-        return CLUSTER_SIZE;
-    }
-}
 
 bool file_exists (char *filename) {
     struct stat   buffer;
@@ -741,7 +704,7 @@ bool stream_file_content(VFS **vfs, dir_item *file_item) {
             break;
         }
 
-        int32_t bytes_to_read =
+        size_t bytes_to_read =
             (bytes_remaining < CLUSTER_SIZE) ? bytes_remaining : CLUSTER_SIZE;
 
         size_t read = vfs_read(vfs, buffer, 1, bytes_to_read);
@@ -1064,17 +1027,21 @@ char* extract_filename_from_path(const char *path) {
 }
 
 int get_file_size(FILE *file, int32_t *size_out) {
-    int fd = fileno(file);
-    if (fd == -1) {
+    if (!file || !size_out)
         return ERROR_CODE;
-    }
 
-    struct stat buf;
-    if (fstat(fd, &buf) == -1) {
+    long pos = ftell(file);
+    if (pos < 0) return ERROR_CODE;
+
+    if (fseek(file, 0, SEEK_END) != 0)
         return ERROR_CODE;
-    }
 
-    *size_out = buf.st_size;
+    long size = ftell(file);
+    if (size < 0) return ERROR_CODE;
+
+    *size_out = (int32_t)size;
+
+    fseek(file, pos, SEEK_SET);
     return NO_ERROR_CODE;
 }
 
@@ -1116,4 +1083,55 @@ void rollback_import(VFS **vfs, directory *dir, dir_item *item,int32_t *blocks, 
         reset_inode(&(*vfs)->inodes[inode_id]);
         write_inode_to_vfs(vfs, inode_id);
     }
+}
+
+directory *resolve_destination_directory(VFS **vfs, directory *parent_dir,
+                                         char *name) {
+    if (!parent_dir || !name || *name == '\0') {
+        return NULL;
+    }
+
+    dir_item *item = find_directory_by_name(parent_dir->subdir, name);
+    if (!item) {
+        return NULL;
+    }
+
+    inode *node = &(*vfs)->inodes[item->inode];
+    if (!node->isDirectory) {
+        return NULL;
+    }
+    return (*vfs)->all_dirs[item->inode];
+}
+
+
+bool smart_parse_destination(VFS **vfs, const char *src_name,
+                            const char *dest_path,
+                            char **final_name, directory **final_dir) {
+    char *dest_name = NULL;
+    directory *dest_dir = NULL;
+
+    if (parse_path(vfs, (char *)dest_path, &dest_name, &dest_dir) == ERROR_CODE) {
+        return false;
+    }
+
+    if (!dest_dir) {
+        return false;
+    }
+
+    if (str_empty(dest_name)) {
+        *final_name = (char *)src_name;
+        *final_dir = dest_dir;
+        return true;
+    }
+
+    directory *target_subdir = resolve_destination_directory(vfs, dest_dir, dest_name);
+
+    if (target_subdir) {
+        *final_name = (char *)src_name;
+        *final_dir = target_subdir;
+    } else {
+        *final_name = dest_name;
+        *final_dir = dest_dir;
+    }
+    return true;
 }

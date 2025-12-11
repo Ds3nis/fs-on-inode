@@ -1,11 +1,14 @@
 //
 // Created by Denis on 03.11.2025.
 //
+#define _GNU_SOURCE
 
 #include "commands.h"
 #include "constants.h"
 #include "vfs.h"
 #include "helpers.h"
+#include <sys/types.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -355,6 +358,7 @@ void cmd_rmdir(VFS **vfs, char **args) {
  * hierarchy. Root (inode 0) is handled as a special case and prints "/".
  */
 void cmd_pwd(VFS **vfs, char **args) {
+    (void)args;
     directory *cur = (*vfs)->current_dir;
     char path[MAX_PATH_LENGTH] = {0};
     char temp[256];
@@ -475,7 +479,7 @@ void cmd_incp(VFS **vfs, char **args) {
 
     char *real_path = args[0];
     char *vfs_path = args[1];
-    printf("%s", vfs_path);
+
     if (parse_path(vfs, vfs_path, &name, &dir) == ERROR_CODE) {
         printf(FILE_NOT_FOUND_MSG);
         return;
@@ -706,6 +710,7 @@ cleanup:
  * filesystem fragmentation and resource availability.
  */
 void cmd_statfs(VFS **vfs, char **args) {
+    (void)args;
     superblock *sb = (*vfs)->superblock;
 
     int used_blocks = count_used_blocks(*vfs);
@@ -849,22 +854,23 @@ void cmd_cp(VFS **vfs, char **args){
         return;
     }
 
-    src_item = find_item_in_directory(src_dir, src_name);
+    src_item = find_directory_by_name(src_dir->file, src_name);
     if (src_item == NULL) {
         printf(FILE_NOT_FOUND_MSG);
         return;
     }
 
-    if (parse_path(vfs, dest_path, &dest_name, &dest_dir) == ERROR_CODE) {
+    if (!smart_parse_destination(vfs, src_name, dest_path,
+                                 &dest_name, &dest_dir)) {
         printf(PATH_NOT_FOUND_MSG);
+        return;
+                                 }
+    if (!validate_new_item_name(dest_name)) {
         return;
     }
 
-    if (str_empty(dest_name)) {
-        dest_name = src_name;
-    }
-
-    if (check_if_exists(dest_dir, dest_name)) {
+    printf("%s", dest_name);
+    if (find_directory_by_name(dest_dir->file, dest_name)) {
         printf(FILE_EXISTS_MSG);
         return;
     }
@@ -957,13 +963,18 @@ void cmd_mv(VFS **vfs, char **args) {
         return;
     }
 
-    if (parse_path(vfs, dest_path, &dest_name, &dest_dir) == ERROR_CODE) {
+    if (!smart_parse_destination(vfs, src_name, dest_path, &dest_name, &dest_dir)) {
         printf(PATH_NOT_FOUND_MSG);
         return;
     }
 
-    if (str_empty(dest_name)) {
-        dest_name = src_name;
+    if (!validate_new_item_name(dest_name)) {
+        return;
+    }
+
+    if (find_directory_by_name(dest_dir->file, dest_name)) {
+        printf(FILE_EXISTS_MSG);
+        return;
     }
 
     dir_item *src_item = find_directory_by_name(src_dir->file, src_name);
@@ -974,11 +985,6 @@ void cmd_mv(VFS **vfs, char **args) {
 
     if (is_circular_move(vfs, src_item->inode, dest_dir)) {
         printf(CIRCULAR_ERROR);
-        return;
-    }
-
-    if (check_if_exists(dest_dir, dest_name)) {
-        printf(FILE_EXISTS_MSG);
         return;
     }
 

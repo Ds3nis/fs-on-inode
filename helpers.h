@@ -18,15 +18,12 @@ dir_item *create_directory_item(int32_t inode_id, const char *name);
 void check_sb_info(VFS **vfs);
 int parse_path(VFS **vfs, char *path, char **name, directory **dir);
 directory *find_directory(VFS **vfs, char *path);
-dir_item *find_item_by_name(dir_item *first, const char *name);
 bool check_if_exists(directory *dir, char *name);
 int32_t *find_free_data_blocks(VFS** vfs, int count);
 void print_directory_content(directory *dir);
-dir_item *find_diritem(dir_item *item,char *name);
 dir_item *remove_diritem(dir_item **head, const char *name);
 void print_dir_item_info(VFS **vfs, dir_item *item);
 void update_sizes_in_file(VFS** vfs, directory *dir, int32_t size);
-int get_last_block_size(int rest);
 bool file_exists(char *filename);
 void add_item_to_list(dir_item **list_head, dir_item *new_item);
 bool validate_new_item_name(char *name);
@@ -57,7 +54,8 @@ char* extract_filename_from_path(const char *path);
 int get_file_size(FILE *file, int32_t *size_out);
 void rollback_import(VFS **vfs, directory *dir, dir_item *item,int32_t *blocks, int block_count, int inode_id);
 int copy_block_to_vfs(FILE *src, VFS **vfs, int32_t block_num, size_t size);
-
+bool smart_parse_destination(VFS **vfs, const char *src_name,const char *dest_path,char **final_name, directory **final_dir);
+directory *resolve_destination_directory(VFS **vfs, directory *parent_dir, char *name);
 #endif //FS_ON_INODE_HELPERS_H
 
 

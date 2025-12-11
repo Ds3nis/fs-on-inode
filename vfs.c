@@ -1,12 +1,12 @@
 //
 // Created by Denis on 05.11.2025.
 //
-
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include "vfs.h"
-#include "structures.h"
 #include <string.h>
+#include "structures.h"
 #include "constants.h"
 #include "commands.h"
 #include "helpers.h"
@@ -190,7 +190,7 @@ bool load_directory_from_vfs(VFS **vfs, directory *dir, int inode_id) {
     for (int i = 0; i < block_count; i++) {
         seek_data_cluster(vfs, data_blocks[i]);
 
-        for (int j = 0; j < MAX_DIR_ENTRIES_PER_CLUSTER; j++) {
+        for (size_t j = 0; j < MAX_DIR_ENTRIES_PER_CLUSTER; j++) {
             int32_t node_id;
             char filename[MAX_ITEM_NAME_LENGTH] = {0};
 
@@ -246,6 +246,7 @@ bool load_directory_from_vfs(VFS **vfs, directory *dir, int inode_id) {
  * Caller is responsible for freeing the returned array.
  */
 int32_t *get_data_blocks(VFS **vfs, int32_t nodeid, int *block_count, int *rest) {
+    (void)rest;
     inode *node = &(*vfs)->inodes[nodeid];
     if (!node) return NULL;
 
@@ -793,7 +794,7 @@ int initialize_inode(VFS** vfs, int32_t inode_id, int32_t size, int block_count,
         node->indirect1 = blocks[block_count_with_indirect - 1]; /* Write address of first indirect block to indirect1 */
     }
 
-    if (block_count > (CLUSTER_SIZE / sizeof(int32_t) + 5)) {
+    if (block_count > (int)(CLUSTER_SIZE / sizeof(int32_t) + 5)) {
         node->indirect2 = blocks[block_count_with_indirect - 2]; /* Use second to last block to write indirect 2*/
         seek_data_cluster(vfs, node->indirect1);
         write_vfs(vfs, &blocks[5], sizeof(int32_t), CLUSTER_SIZE / 4);
