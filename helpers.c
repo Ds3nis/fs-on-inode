@@ -8,7 +8,7 @@
 
 
 /*
- * Returns if string str1 equals str2
+ * Returns true if string str1 equals str2
  */
 bool streq(const char *str1, const char *str2) {
     if (strcmp(str1, str2) == 0) {
@@ -17,7 +17,6 @@ bool streq(const char *str1, const char *str2) {
         return false;
     }
 }
-
 
 /*
  * Returns true if string is empty
@@ -30,7 +29,14 @@ bool str_empty(char *str) {
     return false;
 }
 
-
+/*
+ * Reads a single line from standard input.
+ * The buffer is dynamically resized as needed and always
+ * null-terminated. The caller is responsible for freeing
+ * the returned memory.
+ *
+ * Returns NULL on EOF or allocation failure.
+ */
 char *get_line() {
     size_t cap = 128;
     size_t len = 0;
@@ -132,7 +138,10 @@ superblock *superblock_init(int32_t vfs_size) {
     return sb;
 }
 
-
+/*
+ * Creates and initializes a directory item structure.
+ * The item stores the inode reference and its name.
+ */
 dir_item *create_directory_item(int32_t inode_id, const char *name) {
     dir_item *dir_item = calloc(1, sizeof(struct DIR_ITEM));
     if (!dir_item) {return NULL;}
@@ -219,14 +228,14 @@ int parse_path(VFS **vfs, char *path, char **name, directory **dir) {
         char buff[256];
         memset(buff, 0, sizeof(buff));
         strncpy(buff, path, len);
-        printf("Buffer %s\n", buff);
-        printf("Path %s\n", path);
+        // printf("Buffer %s\n", buff);
+        // printf("Path %s\n", path);
         if (path[0] == '/' && len == 0) {
             strcpy(buff, "/");
         }
-        printf("Buffer %s\n", buff);
+        // printf("Buffer %s\n", buff);
         *dir = find_directory(vfs, buff);
-        printf("From parse: %s\n", (*dir)->current->item_name);
+        // printf("From parse: %s\n", (*dir)->current->item_name);
         if (*dir == NULL) {
             return ERROR_CODE;
         }
@@ -253,7 +262,7 @@ directory *find_directory(VFS **vfs, char *path) {
     directory *current;
 
     // Start from root for absolute path
-    printf("From find: %s\n", path);
+    // printf("From find: %s\n", path);
     if (path[0] == '/') {
         current = (*vfs)->all_dirs[0];
         path++;  // skip leading '/'
@@ -361,7 +370,11 @@ int32_t *find_free_data_blocks(VFS** vfs, int count) {
     return NULL;
 }
 
-
+/*
+ * Prints the contents of a directory.
+ * Lists subdirectories first, followed by files.
+ * If no items exist in a category, "<none>" is shown.
+ */
 void print_directory_content(directory *dir) {
     printf("Directories:\n");
     dir_item *sub = dir->subdir;
@@ -382,6 +395,13 @@ void print_directory_content(directory *dir) {
     }
 }
 
+/*
+ * Removes a directory item with the given name from a linked list.
+ * The removed item is detached and returned to the caller,
+ * who becomes responsible for freeing it.
+ *
+ * Returns NULL if the item was not found.
+ */
 dir_item *remove_diritem(dir_item **head, const char *name) {
     if (head == NULL || *head == NULL || name == NULL) {
         return NULL;
@@ -469,47 +489,19 @@ void print_indirect_block(VFS **vfs, int32_t block) {
     printf("\n");
 }
 
-
-int calculate_required_clusters(int data_blocks) {
-    if (data_blocks <= 5) {
-        return data_blocks;
-    }
-    else if (data_blocks <= (CLUSTER_SIZE / 4) + 5) {
-        return data_blocks + 1;
-    }
-    else {
-        return data_blocks + 2;
-    }
-}
-
-
 /*
- * Propagates a file size change upward through the directory tree.
- * Every directory maintains the total size of its contents via file_size.
+ * Checks whether a file exists in the real filesystem.
  *
- * Walks from the given directory up to the root and adjusts file_size
- * for each ancestor, writing updated inode information to disk.
+ * Returns true if the file is found, false otherwise.
  */
-void update_sizes_in_file(VFS** vfs, directory *dir, int32_t size) {
-    directory *d = dir;
-    while (d != (*vfs)->all_dirs[0]) {
-        (*vfs)->inodes[d->current->inode].file_size += size;
-        write_inode_to_vfs(vfs, d->current->inode);
-        d = d->parent;
-    }
-
-    /* Update root */
-    (*vfs)->inodes[d->current->inode].file_size += size;
-    write_inode_to_vfs(vfs, d->current->inode);
-}
-
-
 bool file_exists (char *filename) {
     struct stat   buffer;
     return (stat (filename, &buffer) == 0);
 }
 
-
+/*
+ * Appends a directory item to the end of a linked list.
+ */
 void add_item_to_list(dir_item **list_head, dir_item *new_item) {
     if (!list_head || !new_item) return;
 
@@ -520,6 +512,9 @@ void add_item_to_list(dir_item **list_head, dir_item *new_item) {
     *current = new_item;
 }
 
+/*
+ * Validates that a new file name fits into directory entry limits.
+ */
 bool validate_new_item_name(char *name) {
     if (strlen(name) >= MAX_ITEM_NAME_LENGTH) {
         printf(NAME_TOO_LONG, MAX_ITEM_NAME_LENGTH - 1);
@@ -528,35 +523,11 @@ bool validate_new_item_name(char *name) {
     return true;
 }
 
-bool allocate_new_inode_and_block(VFS **vfs, int *inode_id, int32_t *block) {
-    *inode_id = vfs_find_free_inode(vfs);
-    if (*inode_id == -1) {
-        printf(NO_FREE_INODE);
-        return false;
-    }
-
-    int32_t *blk = find_free_data_blocks(vfs, 1);
-    if (!blk) {
-        printf(NOT_ENOUGH_BLOCKS_MSG);
-        return false;
-    }
-
-    *block = blk[0];
-    free(blk);
-    return true;
-}
-
-void init_directory_inode(inode *node, int id, int32_t block) {
-    memset(node, 0, sizeof(inode));
-    node->nodeid = id;
-    node->isDirectory = true;
-    node->file_size = 0;
-    node->references = 1;
-    node->direct1 = block;
-    node->direct2 = node->direct3 = node->direct4 =ID_ITEM_FREE;
-    node->direct5 = node->indirect1 = node->indirect2 = ID_ITEM_FREE;
-}
-
+/*
+ * Creates a new directory structure in memory and links it
+ * with its parent directory and inode.
+ * The created directory and its dir_item are returned via output parameters.
+ */
 bool create_directory_structure(VFS **vfs, directory *parent, char *name,
                                 int inode_id, directory **out_dir,
                                 dir_item **out_item)
@@ -585,6 +556,10 @@ bool create_directory_structure(VFS **vfs, directory *parent, char *name,
     return true;
 }
 
+/*
+ * Synchronizes directory changes, inode state, and bitmap updates
+ * to the virtual filesystem file.
+ */
 bool sync_to_disk(VFS **vfs, directory *parent,dir_item *item, int inode_id,int32_t *block, bool create, int8_t value)
 {
     if (update_directory_in_file(vfs, parent, item, create) == ERROR_CODE) {
@@ -618,18 +593,6 @@ dir_item *find_directory_by_name(dir_item *dir, char *name) {
     return NULL;
 }
 
-/*
- * Resets inode fields to the "free" state.
- */
-void reset_inode(inode *nd) {
-    nd->nodeid      = ID_ITEM_FREE;
-    nd->isDirectory = 0;
-    nd->references  = 0;
-    nd->file_size   = 0;
-
-    nd->direct1 = nd->direct2 = nd->direct3 = nd->direct4 = nd->direct5 = ID_ITEM_FREE;
-    nd->indirect1 = nd->indirect2 = ID_ITEM_FREE;
-}
 
 /*
  * Counts how many data blocks are currently marked as used in the bitmap.
@@ -735,6 +698,12 @@ bool stream_file_content(VFS **vfs, dir_item *file_item) {
     return success;
 }
 
+/*
+ * Searches for a file or subdirectory with the given name
+ * inside a directory.
+ *
+ * Returns the corresponding dir_item or NULL if not found.
+ */
 dir_item *find_item_in_directory(directory *parent, char *name) {
     dir_item *item;
 
@@ -812,60 +781,6 @@ bool remove_item_from_list(dir_item **head, const char *name, dir_item **removed
 void safe_copy_name(char *dest, const char *src, size_t max_len) {
     strncpy(dest, src, max_len - 1);
     dest[max_len - 1] = '\0';
-}
-
-/*
- * Overwrites all data clusters of a file with zero bytes.
- * For each referenced data block:
- *   - seeks to the cluster
- *   - writes CLUSTER_SIZE bytes of zero
- *
- * Used when the last hardlink to a file is removed.
- * Does not modify the bitmap; the caller must handle it.
- */
-static int zero_data_blocks(VFS **vfs, int32_t *blocks, int block_count) {
-    static char zero[CLUSTER_SIZE] = {0};
-
-    for (int i = 0; i < block_count; i++) {
-        if (blocks[i] == ID_ITEM_FREE) continue;
-
-        if (seek_data_cluster(vfs, blocks[i]) == ERROR_CODE) {
-            return ERROR_CODE;
-        }
-        if (write_vfs(vfs, zero, sizeof(zero), 1) != 1) {
-            return ERROR_CODE;
-        }
-    }
-
-    return NO_ERROR_CODE;
-}
-
-
-/*
- * Clears content of indirect block tables (indirect1 and indirect2),
- * effectively removing references to secondary and tertiary data blocks.
- *
- * Does NOT clear the referenced blocks themselves — only the pointer tables.
- * The caller is responsible for clearing actual file data blocks.
- */
-int zero_indirect_blocks(VFS **vfs, int32_t indirect1, int32_t indirect2) {
-    static char zero[CLUSTER_SIZE] = {0};
-
-    if (indirect1 != ID_ITEM_FREE) {
-        if (seek_data_cluster(vfs, indirect1) == ERROR_CODE ||
-            write_vfs(vfs, zero, sizeof(zero), 1) != 1) {
-            return ERROR_CODE;
-        }
-    }
-
-    if (indirect2 != ID_ITEM_FREE) {
-        if (seek_data_cluster(vfs, indirect2) == ERROR_CODE ||
-            write_vfs(vfs, zero, sizeof(zero), 1) != 1) {
-            return ERROR_CODE;
-        }
-    }
-
-    return NO_ERROR_CODE;
 }
 
 /*
@@ -969,53 +884,10 @@ int handle_full_file_removal(VFS **vfs, directory *parent,dir_item *item, inode 
     return result;
 }
 
-size_t calculate_last_block_size(int32_t file_size) {
-    int rest = file_size % CLUSTER_SIZE;
-    return (rest != 0) ? rest : CLUSTER_SIZE;
-}
-
-
-int copy_full_block(VFS **vfs, FILE *dest, int32_t block_num) {
-    char buffer[CLUSTER_SIZE];
-
-    if (seek_data_cluster(vfs, block_num) == ERROR_CODE) {
-        return ERROR_CODE;
-    }
-
-    if (vfs_read(vfs, buffer, sizeof(buffer), 1) != 1) {
-        return ERROR_CODE;
-    }
-
-    if (fwrite(buffer, sizeof(buffer), 1, dest) != 1) {
-        return ERROR_CODE;
-    }
-
-    return NO_ERROR_CODE;
-}
-
-
-int copy_partial_block(VFS **vfs, FILE *dest, int32_t block_num, size_t size) {
-    static char buffer[CLUSTER_SIZE];
-
-    if (size > CLUSTER_SIZE) {
-        size = CLUSTER_SIZE;
-    }
-
-    if (seek_data_cluster(vfs, block_num) == ERROR_CODE) {
-        return ERROR_CODE;
-    }
-
-    if (vfs_read(vfs, buffer, size, 1) != 1) {
-        return ERROR_CODE;
-    }
-
-    if (fwrite(buffer, size, 1, dest) != 1) {
-        return ERROR_CODE;
-    }
-
-    return NO_ERROR_CODE;
-}
-
+/*
+ * Extracts the filename from a filesystem path.
+ * If no path separator is found, the whole string is returned.
+ */
 char* extract_filename_from_path(const char *path) {
     char *name = strrchr(path, '\\');
 
@@ -1026,6 +898,10 @@ char* extract_filename_from_path(const char *path) {
     }
 }
 
+/*
+ * Retrieves the size of a real filesystem file without changing
+ * the current file position.
+ */
 int get_file_size(FILE *file, int32_t *size_out) {
     if (!file || !size_out)
         return ERROR_CODE;
@@ -1041,35 +917,17 @@ int get_file_size(FILE *file, int32_t *size_out) {
 
     *size_out = (int32_t)size;
 
+    // Restore original file position
     fseek(file, pos, SEEK_SET);
     return NO_ERROR_CODE;
 }
 
-int copy_block_to_vfs(FILE *src, VFS **vfs, int32_t block_num, size_t size) {
-    static char buffer[CLUSTER_SIZE];
-
-    if (size > CLUSTER_SIZE) {
-        size = CLUSTER_SIZE;
-    }
-
-    if (fread(buffer, size, 1, src) != 1) {
-        if (!feof(src)) {
-            return ERROR_CODE;
-        }
-    }
-
-    if (seek_data_cluster(vfs, block_num) == ERROR_CODE) {
-        return ERROR_CODE;
-    }
-
-    if (write_vfs(vfs, buffer, size, 1) != 1) {
-        return ERROR_CODE;
-    }
-
-    return NO_ERROR_CODE;
-}
-
-void rollback_import(VFS **vfs, directory *dir, dir_item *item,int32_t *blocks, int block_count, int inode_id) {
+/*
+ * Reverts all filesystem changes made during a failed import operation.
+ * This includes directory entries, bitmap updates, and inode allocation.
+ */
+void rollback_import(VFS **vfs, directory *dir, dir_item *item,
+                     int32_t *blocks, int block_count, int inode_id) {
     if (item) {
         remove_diritem(&dir->file, item->item_name);
         update_directory_in_file(vfs, dir, item, false);
@@ -1085,6 +943,11 @@ void rollback_import(VFS **vfs, directory *dir, dir_item *item,int32_t *blocks, 
     }
 }
 
+
+/*
+ * Resolves a directory name inside a parent directory.
+ * Returns the directory if the name exists and refers to a directory inode.
+ */
 directory *resolve_destination_directory(VFS **vfs, directory *parent_dir,
                                          char *name) {
     if (!parent_dir || !name || *name == '\0') {
@@ -1104,6 +967,11 @@ directory *resolve_destination_directory(VFS **vfs, directory *parent_dir,
 }
 
 
+/*
+ * Determines the final destination directory and file name.
+ * If dest_path points to a directory, the source name is reused.
+ * Otherwise, dest_path is treated as a new file name.
+ */
 bool smart_parse_destination(VFS **vfs, const char *src_name,
                             const char *dest_path,
                             char **final_name, directory **final_dir) {

@@ -466,13 +466,28 @@ void cmd_info(VFS **vfs, char **args) {
 }
 
 
+/*
+ * Imports a file from the real filesystem into the virtual filesystem.
+ * The function allocates new data blocks, creates an inode, copies file
+ * contents block-by-block, and updates all filesystem metadata.
+ * In case of any error, all changes are rolled back to keep the VFS consistent.
+ */
 void cmd_incp(VFS **vfs, char **args) {
+    // Parsed destination path inside VFS
     char *name = NULL;
     directory *dir = NULL;
+
+    // New directory entry and inode metadata
     dir_item *new_item = NULL;
-    FILE *src_file = NULL;
-    int32_t *blocks = NULL;
     int32_t inode_id = ERROR_CODE;
+
+    // Source file on real filesystem
+    FILE *src_file = NULL;
+
+    // Allocated data blocks for the new file
+    int32_t *blocks = NULL;
+
+    // File size and block counts
     int32_t file_size = 0;
     int block_count = 0;
     int real_block_count = 0;
@@ -480,6 +495,7 @@ void cmd_incp(VFS **vfs, char **args) {
     char *real_path = args[0];
     char *vfs_path = args[1];
 
+    // Resolve target directory and name in VFS
     if (parse_path(vfs, vfs_path, &name, &dir) == ERROR_CODE) {
         printf(FILE_NOT_FOUND_MSG);
         return;
@@ -490,15 +506,17 @@ void cmd_incp(VFS **vfs, char **args) {
         return;
     }
 
+    // If no name is provided, extract it from the real file path
     if (str_empty(name)) {
         name = extract_filename_from_path(real_path);
     }
-    printf("%s\n", name);
+
     if (str_empty(name)) {
         printf("ERROR: Cannot determine filename\n");
         return;
     }
 
+    // Validate name length and uniqueness
     if (!validate_new_item_name(name)) {
         return;
     }
@@ -508,14 +526,14 @@ void cmd_incp(VFS **vfs, char **args) {
         return;
     }
 
-
+    // Open source file for binary reading
     src_file = fopen(real_path, "rb");
     if (!src_file) {
         perror(OPEN_FILE_ERR_MSG);
         return;
     }
 
-
+    // Determine source file size
     if (get_file_size(src_file, &file_size) == ERROR_CODE) {
         printf("ERROR: Cannot determine file size\n");
         fclose(src_file);
@@ -526,9 +544,11 @@ void cmd_incp(VFS **vfs, char **args) {
         printf("WARNING: Source file is empty (0 bytes)\n");
     }
 
+    // Calculate required number of data clusters
     block_count = (file_size + CLUSTER_SIZE - 1) / CLUSTER_SIZE;
     real_block_count = calculate_required_clusters(block_count);
 
+    // Allocate free data blocks
     blocks = find_free_data_blocks(vfs, real_block_count);
     if (!blocks) {
         printf(NOT_ENOUGH_BLOCKS_MSG);
@@ -536,12 +556,14 @@ void cmd_incp(VFS **vfs, char **args) {
         return;
     }
 
+    // Allocate a free inode
     inode_id = vfs_find_free_inode(vfs);
     if (inode_id == ERROR_CODE) {
         printf(NO_FREE_INODE_MSG);
         goto cleanup;
     }
 
+    // Create directory entry and attach it to the parent directory
     new_item = create_directory_item(inode_id, name);
     if (!new_item) {
         printf("ERROR: Failed to create directory item\n");
@@ -550,37 +572,35 @@ void cmd_incp(VFS **vfs, char **args) {
 
     add_item_to_list(&dir->file, new_item);
 
-
+    // Initialize inode structure and data block references
     int last_block_index = initialize_inode(vfs, inode_id, file_size,
-                                           block_count, blocks);
+                                            block_count, blocks);
     if (last_block_index < 0) {
         printf("ERROR: Failed to initialize inode\n");
         goto cleanup_rollback;
     }
 
-
-    // Копіюємо повні блоки
+    // Copy all full data blocks
     for (int i = 0; i < block_count - 1; i++) {
-        if (copy_block_to_vfs(src_file, vfs, blocks[i],
-                             CLUSTER_SIZE) == ERROR_CODE) {
+        if (copy_block_to_vfs(src_file, vfs, blocks[i], CLUSTER_SIZE) == ERROR_CODE) {
             printf("ERROR: Failed to copy block %d/%d\n", i + 1, block_count);
             goto cleanup_rollback;
         }
     }
 
+    // Copy the last (possibly partial) block
     if (block_count > 0) {
         size_t last_size = calculate_last_block_size(file_size);
-        if (copy_block_to_vfs(src_file, vfs, blocks[last_block_index],
-                             last_size) == ERROR_CODE) {
+        if (copy_block_to_vfs(src_file, vfs,
+                              blocks[last_block_index], last_size) == ERROR_CODE) {
             printf("ERROR: Failed to copy last block\n");
             goto cleanup_rollback;
         }
     }
 
+    // Persist data and metadata changes
     flush_vfs(vfs);
-
-    update_bitmap_in_file(vfs, new_item, 1, blocks,block_count);
-
+    update_bitmap_in_file(vfs, new_item, 1, blocks, block_count);
     write_inode_to_vfs(vfs, inode_id);
 
     if (update_directory_in_file(vfs, dir, new_item, true) == ERROR_CODE) {
@@ -588,15 +608,15 @@ void cmd_incp(VFS **vfs, char **args) {
         goto cleanup_rollback;
     }
 
+    // Update directory size hierarchy
     update_sizes_in_file(vfs, dir, file_size);
-
 
     printf("OK: Imported %d bytes from '%s' to '%s'\n",
            file_size, real_path, vfs_path);
-
     goto cleanup;
 
 cleanup_rollback:
+    // Undo all changes in case of failure
     rollback_import(vfs, dir, new_item, blocks, block_count, inode_id);
     printf("ERROR: Import failed, changes rolled back\n");
 
@@ -606,62 +626,84 @@ cleanup:
 }
 
 
+
+/*
+ * Exports a file from the virtual filesystem to the real filesystem.
+ * The function reads all data blocks of the VFS file and writes
+ * their contents into a newly created real file.
+ */
 void cmd_outcp(VFS **vfs, char **args) {
+    // Parsed VFS path components
     char *name = NULL;
     directory *dir = NULL;
     dir_item *item = NULL;
+
+    // Output file on the real filesystem
     FILE *output_file = NULL;
+
+    // Data block list and counters
     int32_t *blocks = NULL;
     int block_count = 0, rest = 0;
+
+    // Used to track overall operation success
     int result = ERROR_CODE;
 
+    // Source path in VFS and destination path on real FS
     char *vfs_path = args[0];
     char *real_path = args[1];
 
+    // Resolve the source file path inside VFS
     if (parse_path(vfs, vfs_path, &name, &dir) == ERROR_CODE) {
         printf(FILE_NOT_FOUND_MSG);
         return;
     }
 
+    // Locate directory entry of the source file
     item = find_directory_by_name(dir->file, name);
     if (!item) {
         printf(FILE_NOT_FOUND_MSG);
         return;
     }
 
+    // Validate inode type
     inode *nd = &(*vfs)->inodes[item->inode];
     if (nd->isDirectory) {
         printf("ERROR: '%s' is a directory. Cannot export directories.\n", name);
         return;
     }
 
+    // Warn about empty files
     if (nd->file_size == 0) {
         printf("WARNING: '%s' is empty (0 bytes)\n", name);
     }
 
+    // Warn if destination file already exists
     if (file_exists(real_path)) {
         printf("WARNING: '%s' already exists and will be overwritten.\n", real_path);
     }
 
+    // Open destination file for binary writing
     output_file = fopen(real_path, "wb");
     if (!output_file) {
         perror("ERROR: Failed to create output file");
         return;
     }
 
+    // Retrieve all data blocks associated with the file
     blocks = get_data_blocks(vfs, item->inode, &block_count, &rest);
     if (!blocks) {
         printf("ERROR: Failed to read file blocks\n");
         goto cleanup;
     }
 
+    // Handle files without data blocks
     if (block_count == 0) {
         printf("WARNING: File has no data blocks\n");
         result = NO_ERROR_CODE;
         goto cleanup;
     }
 
-    // 8. Копіювання повних блоків
+    // Copy all full data blocks
     for (int i = 0; i < block_count - 1; i++) {
         if (copy_full_block(vfs, output_file, blocks[i]) == ERROR_CODE) {
             printf("ERROR: Failed to copy block %d/%d\n", i + 1, block_count);
@@ -669,10 +711,10 @@ void cmd_outcp(VFS **vfs, char **args) {
         }
     }
 
-    // 9. Копіювання останнього блоку (може бути неповним)
+    // Copy the last (possibly partial) data block
     size_t last_block_size = calculate_last_block_size(nd->file_size);
     if (copy_partial_block(vfs, output_file, blocks[block_count - 1],
-                          last_block_size) == ERROR_CODE) {
+                           last_block_size) == ERROR_CODE) {
         printf("ERROR: Failed to copy last block\n");
         goto cleanup;
     }
@@ -682,6 +724,7 @@ void cmd_outcp(VFS **vfs, char **args) {
            nd->file_size, vfs_path, real_path);
 
 cleanup:
+    // Finalize output file and remove it if an error occurred
     if (output_file) {
         fflush(output_file);
         fclose(output_file);
@@ -692,9 +735,11 @@ cleanup:
         }
     }
 
+    // Free allocated resources and flush VFS buffers
     free(blocks);
     flush_vfs(vfs);
 }
+
 
 /*
  * Prints general statistics about the virtual filesystem.
@@ -754,7 +799,6 @@ void cmd_load(VFS **vfs, char **args) {
     size_t len = 0;
     ssize_t read;
 
-    printf("[DEBUG] Loading file: '%s'\n", filename);
 
     // Prevent infinite nested loads
     if (load_depth >= MAX_LOAD_DEPTH) {
@@ -774,28 +818,22 @@ void cmd_load(VFS **vfs, char **args) {
         return;
     }
 
-    printf("[DEBUG] File opened successfully\n");
     load_depth++;
-    printf("[DEBUG] Load depth: %d\n", load_depth);
 
     while ((read = getline(&line, &len, command_file)) != -1) {
-        printf("[DEBUG] Read line: '%s' (length: %zd)\n", line, read);
         remove_nl_inplace(line);
 
-        // Skip empty lines
         if (strlen(line) == 0) {
             printf("[DEBUG] Skipping empty line\n");
             continue;
         }
 
-        // Show the command for user context
         printf("> %s\n", line);
 
-        // Execute the command the same way as user input
         process_command_line(vfs, line);
     }
 
-    printf("[DEBUG] Finished reading file\n");
+    // printf("[DEBUG] Finished reading file\n");
     load_depth--;
 
     fclose(command_file);
@@ -833,6 +871,11 @@ void cmd_cat(VFS **vfs, char **args) {
     }
 }
 
+/*
+ * Copies a file from src_path to dest_path inside the virtual filesystem.
+ * The command allocates new data blocks and a new inode, then copies
+ * file contents cluster by cluster.
+ */
 void cmd_cp(VFS **vfs, char **args){
     char* src_path = args[0];
     char* dest_path = args[1];

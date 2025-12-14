@@ -11,6 +11,12 @@
 #include "commands.h"
 #include "helpers.h"
 
+
+/*
+ * Initializes the VFS structure.
+ * If the VFS file already exists, it is opened and loaded into memory.
+ * Otherwise, the user is prompted to format a new virtual filesystem.
+ */
 void initialize_vfs(VFS **vfs, char *vfs_name) {
     *vfs = calloc(1, sizeof(VFS));
 
@@ -39,6 +45,11 @@ void initialize_vfs(VFS **vfs, char *vfs_name) {
     printf(VFS_LOAD_SUCCESS);
 }
 
+/*
+ * Handles the case when the VFS file does not exist.
+ * Asks the user whether to format a new filesystem and
+ * performs formatting if confirmed.
+ */
 void needs_format(VFS **vfs) {
     printf(START_NEEDS_FORMAT_MSG);
     (*vfs)->is_formatted = false;
@@ -60,7 +71,11 @@ void needs_format(VFS **vfs) {
     free(choice_line);
 }
 
-
+/*
+ * Loads an existing VFS from disk into memory.
+ * Reads the superblock, bitmap, inodes, and reconstructs
+ * the directory hierarchy starting from the root directory.
+ */
 bool load_vfs(VFS **vfs) {
     if (!vfs || !*vfs) {return false;}
     (*vfs)->superblock = calloc(1, sizeof(superblock));
@@ -127,6 +142,11 @@ bool load_vfs(VFS **vfs) {
     return true;
 }
 
+/*
+ * Reads the superblock from the VFS file.
+ * The superblock contains all essential metadata
+ * describing the layout of the filesystem.
+ */
 bool vfs_read_sb(VFS **vfs) {
 
     size_t bytes_read = 0;
@@ -152,6 +172,10 @@ bool vfs_read_sb(VFS **vfs) {
     return true;
 }
 
+/*
+ * Reads a single inode from disk into memory.
+ * The inode is loaded based on its index in the inode table.
+ */
 void vfs_read_inodes(VFS **vfs, int index) {
     long base = (*vfs)->superblock->inode_start_address + (long)index * INODE_SIZE;
     vfs_seek_from_start(vfs, base);
@@ -168,12 +192,20 @@ void vfs_read_inodes(VFS **vfs, int index) {
     vfs_read_int32(vfs, &(*vfs)->inodes[index].indirect2);
 }
 
-
+/*
+ * Loads the directory tree from the VFS recursively,
+ * starting from the root directory.
+ */
 bool vfs_load_directories(VFS **vfs, directory *root) {
     if (!vfs || !*vfs || !root) return false;
     return load_directory_from_vfs(vfs, root, root->current->inode);
 }
 
+/*
+ * Reads directory entries stored in data clusters and
+ * reconstructs the directory structure in memory.
+ * Subdirectories are loaded recursively.
+ */
 bool load_directory_from_vfs(VFS **vfs, directory *dir, int inode_id) {
     if (!vfs || !*vfs || !dir) return false;
 
@@ -301,10 +333,13 @@ int32_t *get_data_blocks(VFS **vfs, int32_t nodeid, int *block_count, int *rest)
     return blocks;
 }
 
-
+/*
+ * Moves the file cursor to the beginning of a data cluster.
+ */
 int seek_data_cluster(VFS **vfs, int block_number) {
     return seek_set(vfs, (*vfs)->superblock->data_start_address + block_number * CLUSTER_SIZE);
 }
+
 
 int seek_set(VFS **vfs, long int offset) {
     return fseek((*vfs)->vfs_file, offset, SEEK_SET);
@@ -314,7 +349,9 @@ int seek_cur(VFS **vfs, long int offset) {
     return fseek((*vfs)->vfs_file, offset, SEEK_CUR);
 }
 
-
+/*
+ * Writes raw data to the VFS file.
+ */
 size_t write_vfs(VFS **vfs, const void * ptr, size_t size, size_t count) {
     return fwrite(ptr, size, count, (*vfs)->vfs_file);
 }
@@ -376,11 +413,15 @@ void rewind_vfs(VFS **vfs) {
     rewind((*vfs)->vfs_file);
 }
 
+/*
+ * Flushes buffered VFS data to disk.
+ */
 void flush_vfs(VFS **vfs) {
     if (vfs && *vfs && (*vfs)->vfs_file) {
         fflush((*vfs)->vfs_file);
     }
 }
+
 
 int vfs_seek_from_start(VFS **vfs, long offset) {
     return fseek((*vfs)->vfs_file, offset, SEEK_SET);
@@ -531,8 +572,10 @@ int update_directory_in_file(VFS** vfs, directory *dir, dir_item *item, bool cre
     }
 }
 
-
-
+/*
+ * Writes a new directory entry into the parent directory on disk.
+ * If no free space is available, a new data cluster is allocated.
+ */
 int create_directory_in_file(VFS** vfs, directory *dir, dir_item *item) {
     int i, j, block_count;
     int32_t *blocks, *free_block;
@@ -602,6 +645,10 @@ int create_directory_in_file(VFS** vfs, directory *dir, dir_item *item) {
     return NO_ERROR_CODE;
 }
 
+/*
+ * Removes a directory entry from the parent directory on disk.
+ * Frees data clusters and indirect references if they become unused.
+ */
 int remove_directory_from_file(VFS** vfs, directory *dir, dir_item *item) {
     int block_number, j, block_count, item_count, rest, found = 0;
     int32_t *blocks, number, count, zero = 0;
@@ -812,6 +859,12 @@ int initialize_inode(VFS** vfs, int32_t inode_id, int32_t size, int block_count,
     return last_data_block;
 }
 
+/*
+ * Allocates a specified number of free data clusters
+ * by scanning the data bitmap.
+ *
+ * Returns an array of cluster indices or NULL if allocation fails.
+ */
 int32_t *alloc_free_clusters(VFS **vfs, int count) {
     if (vfs == NULL || *vfs == NULL || count <= 0) {
         return NULL;
@@ -835,4 +888,231 @@ int32_t *alloc_free_clusters(VFS **vfs, int count) {
 
     free(clusters);
     return NULL;
+}
+
+/*
+ * Resets inode fields to the "free" state.
+ */
+void reset_inode(inode *nd) {
+    nd->nodeid      = ID_ITEM_FREE;
+    nd->isDirectory = 0;
+    nd->references  = 0;
+    nd->file_size   = 0;
+
+    nd->direct1 = nd->direct2 = nd->direct3 = nd->direct4 = nd->direct5 = ID_ITEM_FREE;
+    nd->indirect1 = nd->indirect2 = ID_ITEM_FREE;
+}
+
+/*
+ * Initializes an inode structure to represent a directory.
+ * Sets default values and assigns the first data block.
+ */
+void init_directory_inode(inode *node, int id, int32_t block) {
+    memset(node, 0, sizeof(inode));
+    node->nodeid = id;
+    node->isDirectory = true;
+    node->file_size = 0;
+    node->references = 1;
+    node->direct1 = block;
+    node->direct2 = node->direct3 = node->direct4 =ID_ITEM_FREE;
+    node->direct5 = node->indirect1 = node->indirect2 = ID_ITEM_FREE;
+}
+
+/*
+ * Allocates a free inode and a single free data block.
+ * Used mainly for directory creation.
+ */
+bool allocate_new_inode_and_block(VFS **vfs, int *inode_id, int32_t *block) {
+    *inode_id = vfs_find_free_inode(vfs);
+    if (*inode_id == -1) {
+        printf(NO_FREE_INODE);
+        return false;
+    }
+
+    int32_t *blk = find_free_data_blocks(vfs, 1);
+    if (!blk) {
+        printf(NOT_ENOUGH_BLOCKS_MSG);
+        return false;
+    }
+
+    *block = blk[0];
+    free(blk);
+    return true;
+}
+
+/*
+ * Calculates the number of valid bytes stored in the last data block
+ * of a file based on its total size.
+ */
+size_t calculate_last_block_size(int32_t file_size) {
+    int rest = file_size % CLUSTER_SIZE;
+    return (rest != 0) ? rest : CLUSTER_SIZE;
+}
+
+/*
+ * Calculates how many clusters are required to store a file,
+ * including indirect and double-indirect block references.
+ */
+int calculate_required_clusters(int data_blocks) {
+    if (data_blocks <= 5) {
+        return data_blocks;
+    }
+    else if (data_blocks <= (CLUSTER_SIZE / 4) + 5) {
+        return data_blocks + 1;
+    }
+    else {
+        return data_blocks + 2;
+    }
+}
+
+/*
+ * Propagates a file size change upward through the directory tree.
+ * Every directory maintains the total size of its contents via file_size.
+ *
+ * Walks from the given directory up to the root and adjusts file_size
+ * for each ancestor, writing updated inode information to disk.
+ */
+void update_sizes_in_file(VFS** vfs, directory *dir, int32_t size) {
+    directory *d = dir;
+    while (d != (*vfs)->all_dirs[0]) {
+        (*vfs)->inodes[d->current->inode].file_size += size;
+        write_inode_to_vfs(vfs, d->current->inode);
+        d = d->parent;
+    }
+
+    /* Update root */
+    (*vfs)->inodes[d->current->inode].file_size += size;
+    write_inode_to_vfs(vfs, d->current->inode);
+}
+
+/*
+ * Copies a single data block from a real file into a specific
+ * data cluster in the virtual filesystem.
+ */
+int copy_block_to_vfs(FILE *src, VFS **vfs, int32_t block_num, size_t size) {
+    static char buffer[CLUSTER_SIZE];
+
+    // Clamp copy size to cluster limits
+    if (size > CLUSTER_SIZE) {
+        size = CLUSTER_SIZE;
+    }
+
+    // Read data from the source file
+    if (fread(buffer, size, 1, src) != 1 && !feof(src)) {
+        return ERROR_CODE;
+    }
+
+    // Write data into the target VFS cluster
+    if (seek_data_cluster(vfs, block_num) == ERROR_CODE) {
+        return ERROR_CODE;
+    }
+
+    if (write_vfs(vfs, buffer, size, 1) != 1) {
+        return ERROR_CODE;
+    }
+
+    return NO_ERROR_CODE;
+}
+
+/*
+ * Copies one full data cluster from the VFS into a real filesystem file.
+ */
+int copy_full_block(VFS **vfs, FILE *dest, int32_t block_num) {
+    char buffer[CLUSTER_SIZE];
+
+    if (seek_data_cluster(vfs, block_num) == ERROR_CODE) {
+        return ERROR_CODE;
+    }
+
+    if (vfs_read(vfs, buffer, sizeof(buffer), 1) != 1) {
+        return ERROR_CODE;
+    }
+
+    if (fwrite(buffer, sizeof(buffer), 1, dest) != 1) {
+        return ERROR_CODE;
+    }
+
+    return NO_ERROR_CODE;
+}
+
+/*
+ * Copies only the valid portion of the last data block.
+ * This is used when the file size does not fully occupy
+ * the final cluster.
+ */
+int copy_partial_block(VFS **vfs, FILE *dest, int32_t block_num, size_t size) {
+    static char buffer[CLUSTER_SIZE];
+
+    // Clamp size to cluster boundaries
+    if (size > CLUSTER_SIZE) {
+        size = CLUSTER_SIZE;
+    }
+
+    if (seek_data_cluster(vfs, block_num) == ERROR_CODE) {
+        return ERROR_CODE;
+    }
+
+    if (vfs_read(vfs, buffer, size, 1) != 1) {
+        return ERROR_CODE;
+    }
+
+    if (fwrite(buffer, size, 1, dest) != 1) {
+        return ERROR_CODE;
+    }
+
+    return NO_ERROR_CODE;
+}
+
+/*
+ * Overwrites all data clusters of a file with zero bytes.
+ * For each referenced data block:
+ *   - seeks to the cluster
+ *   - writes CLUSTER_SIZE bytes of zero
+ *
+ * Used when the last hardlink to a file is removed.
+ * Does not modify the bitmap; the caller must handle it.
+ */
+int zero_data_blocks(VFS **vfs, int32_t *blocks, int block_count) {
+    static char zero[CLUSTER_SIZE] = {0};
+
+    for (int i = 0; i < block_count; i++) {
+        if (blocks[i] == ID_ITEM_FREE) continue;
+
+        if (seek_data_cluster(vfs, blocks[i]) == ERROR_CODE) {
+            return ERROR_CODE;
+        }
+        if (write_vfs(vfs, zero, sizeof(zero), 1) != 1) {
+            return ERROR_CODE;
+        }
+    }
+
+    return NO_ERROR_CODE;
+}
+
+
+/*
+ * Clears content of indirect block tables (indirect1 and indirect2),
+ * effectively removing references to secondary and tertiary data blocks.
+ *
+ * Does NOT clear the referenced blocks themselves — only the pointer tables.
+ * The caller is responsible for clearing actual file data blocks.
+ */
+int zero_indirect_blocks(VFS **vfs, int32_t indirect1, int32_t indirect2) {
+    static char zero[CLUSTER_SIZE] = {0};
+
+    if (indirect1 != ID_ITEM_FREE) {
+        if (seek_data_cluster(vfs, indirect1) == ERROR_CODE ||
+            write_vfs(vfs, zero, sizeof(zero), 1) != 1) {
+            return ERROR_CODE;
+            }
+    }
+
+    if (indirect2 != ID_ITEM_FREE) {
+        if (seek_data_cluster(vfs, indirect2) == ERROR_CODE ||
+            write_vfs(vfs, zero, sizeof(zero), 1) != 1) {
+            return ERROR_CODE;
+            }
+    }
+
+    return NO_ERROR_CODE;
 }

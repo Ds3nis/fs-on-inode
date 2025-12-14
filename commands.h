@@ -95,7 +95,19 @@ void cmd_statfs(VFS **vfs, char **args);
  */
 void cmd_load(VFS **vfs, char **args);
 
+/*
+ * Imports a file from the real filesystem into the virtual filesystem.
+ * The function allocates new data blocks, creates an inode, copies file
+ * contents block-by-block, and updates all filesystem metadata.
+ * In case of any error, all changes are rolled back to keep the VFS consistent.
+ */
 void cmd_incp(VFS **vfs, char **args);
+
+/*
+ * Exports a file from the virtual filesystem to the real filesystem.
+ * The function reads all data blocks of the VFS file and writes
+ * their contents into a newly created real file.
+ */
 void cmd_outcp(VFS **vfs, char **args);
 
 /*
@@ -103,6 +115,11 @@ void cmd_outcp(VFS **vfs, char **args);
  */
 void cmd_cat(VFS **vfs, char **args);
 
+/*
+ * Copies a file from src_path to dest_path inside the virtual filesystem.
+ * The command allocates new data blocks and a new inode, then copies
+ * file contents cluster by cluster.
+ */
 void cmd_cp(VFS **vfs, char **args);
 
 /*
@@ -115,6 +132,9 @@ void cmd_mv(VFS **vfs, char **args);
  */
 void cmd_rm(VFS **vfs, char **args);
 
+/*
+ * Creates a hard link to an existing file within the virtual filesystem
+ */
 void cmd_ln(VFS **vfs, char **args);
 
 /*
