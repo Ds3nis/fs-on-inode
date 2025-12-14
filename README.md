@@ -70,6 +70,8 @@ Each command manipulates the virtual file system, not the host OS filesystem.
 
 | `statfs` | Display file system statistics. |
 
+| `ln s1 s2` | Creates a hard link to file s1 named s2. |
+
 | `exit` | Exit the program. |
 
 
