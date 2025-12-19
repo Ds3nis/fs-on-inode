@@ -302,6 +302,10 @@ void cmd_rmdir(VFS **vfs, char **args) {
         return;
     }
 
+    //
+    // printf("Name to delete: %s/n", name);
+    // printf("Name parent directory: %s/n", parent->current->item_name);
+    // printf("Name current directory: %s/n", (*vfs)->current_dir->current->item_name);
     // Locate directory entry in parent
     dir_item *dir_item_to_remove = find_directory_by_name(parent->subdir, name);
     if (!dir_item_to_remove) {
@@ -316,12 +320,25 @@ void cmd_rmdir(VFS **vfs, char **args) {
         return;
     }
 
+
     // Retrieve full directory structure
     directory *target_dir = (*vfs)->all_dirs[dir_item_to_remove->inode];
     if (!target_dir) {
         printf(PATH_NOT_FOUND_MSG);
         return;
     }
+
+    if (target_dir == (*vfs)->all_dirs[0]) {
+        printf("Error: Cannot remove root directory '/'\n");
+        return;
+    }
+
+    if (target_dir == (*vfs)->current_dir) {
+        printf("Error: Cannot remove current directory\n");
+        printf("Hint: Use 'cd ..' to move to parent directory first\n");
+        return;
+    }
+
 
     // Cannot delete non-empty directories
     if (target_dir->file != NULL || target_dir->subdir != NULL) {
